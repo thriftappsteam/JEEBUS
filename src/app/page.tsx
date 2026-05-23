@@ -170,7 +170,12 @@ export default async function Home({
 
   const myPending = today.filter((r) => r.is_for_me && r.status === "pending");
   const myDone = today.filter((r) => r.is_for_me && r.status === "done");
-  const otherToday = today.filter((r) => !r.is_for_me);
+  // Hide "skipped" rows from other people's list — those are cancelled chores
+  // (e.g. someone else already did it, or we flipped to OnDemand). Leaving them
+  // visible makes it look like the chore is still hanging over that person.
+  const otherToday = today.filter(
+    (r) => !r.is_for_me && r.status !== "skipped",
+  );
 
   /* -------------- Claims (kid asks to take a chore for $X) -------------- */
   // Parents see all pending claims for today's chores so they can approve.
