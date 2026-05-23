@@ -1,6 +1,8 @@
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { Header } from "@/components/brand/Header";
 import { Avatar } from "@/components/brand/Avatar";
+import { Toast } from "@/components/brand/Toast";
 import { markEarningPaid } from "@/app/actions/earnings";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +20,14 @@ type Earning = {
   owed_by: { id: string; name: string } | null;
 };
 
-export default async function MoneyPage() {
+export default async function MoneyPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ added?: string }>;
+}) {
+  const { added } = await searchParams;
+  const toastMessage = added ? "Earning added" : null;
+
   const supabase = await createClient();
 
   const { data: members } = await supabase
@@ -52,7 +61,19 @@ export default async function MoneyPage() {
 
   return (
     <main className="mx-auto max-w-md px-6 pt-10 pb-8">
-      <Header subtitle="Pocket money — paid chores, owed and paid." />
+      <Header
+        subtitle="Pocket money — paid chores, owed and paid."
+        rightSlot={
+          <Link
+            href="/money/add"
+            className="rounded-xl bg-emerald-300 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-950 hover:bg-emerald-200"
+          >
+            + Add
+          </Link>
+        }
+      />
+
+      <Toast message={toastMessage} />
 
       <section className="mt-8">
         <h2 className="font-display text-3xl font-bold text-slate-50">
