@@ -4,6 +4,11 @@ import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { markDone } from "@/app/actions/done";
 import { pickMember } from "@/app/actions/whoami";
+import {
+  requestChoreClaim,
+  approveChoreClaim,
+  declineChoreClaim,
+} from "@/app/actions/claims";
 import { formatLocalTime } from "@/lib/utils/time";
 import { Mascot } from "@/components/brand/Mascot";
 import { Wordmark } from "@/components/brand/Wordmark";
@@ -38,9 +43,23 @@ const PICKER_ORDER: Record<string, number> = {
 export default async function Home({
   searchParams,
 }: {
-  searchParams: Promise<{ done?: string; error?: string }>;
+  searchParams: Promise<{
+    done?: string;
+    error?: string;
+    claim_sent?: string;
+    claim_approved?: string;
+    claim_declined?: string;
+    claim_resubmitted?: string;
+  }>;
 }) {
-  const { done, error } = await searchParams;
+  const {
+    done,
+    error,
+    claim_sent,
+    claim_approved,
+    claim_declined,
+    claim_resubmitted,
+  } = await searchParams;
   const supabase = await createClient();
   const cookieStore = await cookies();
   const memberId = cookieStore.get("hyetas_member_id")?.value ?? null;
@@ -153,6 +172,57 @@ export default async function Home({
   const myDone = today.filter((r) => r.is_for_me && r.status === "done");
   const otherToday = today.filter((r) => !r.is_for_me);
 
+  /* -------------- Claims (kid asks to take a chore for $X) -------------- */
+  // Parents see all pending claims for today's chores so they can approve.
+  // Kids see their own pending claims so we can show "Waiting" instead of the form.
+  type ClaimRow = {
+    id: string;
+    assignment_id: string;
+    requested_amount: number;
+    notes: string | null;
+    created_at: string;
+    requester: { id: string; name: string } | null;
+  };
+
+  const todayAssignmentIds = today.map((r) => r.assignment_id);
+  let pendingClaimsForApproval: ClaimRow[] = [];
+  let myOwnPendingClaims: ClaimRow[] = [];
+
+  if (todayAssignmentIds.length > 0) {
+    if (me.role === "parent") {
+      const { data: claimRows } = await supabase
+        .from("chore_claims")
+        .select(
+          `id, assignment_id, requested_amount, notes, created_at,
+           requester:members!requested_by_member_id(id, name)`,
+        )
+        .in("assignment_id", todayAssignmentIds)
+        .eq("status", "pending")
+        .order("created_at");
+      pendingClaimsForApproval =
+        (claimRows as unknown as ClaimRow[] | null) ?? [];
+    } else {
+      const { data: claimRows } = await supabase
+        .from("chore_claims")
+        .select(
+          `id, assignment_id, requested_amount, notes, created_at,
+           requester:members!requested_by_member_id(id, name)`,
+        )
+        .in("assignment_id", todayAssignmentIds)
+        .eq("status", "pending")
+        .eq("requested_by_member_id", me.id);
+      myOwnPendingClaims = (claimRows as unknown as ClaimRow[] | null) ?? [];
+    }
+  }
+  const myPendingClaimAssignmentIds = new Set(
+    myOwnPendingClaims.map((c) => c.assignment_id),
+  );
+  // Quick lookup: assignmentId -> chore name (used in the parent approval card)
+  const choreNameByAssignmentId = new Map<string, string>();
+  for (const r of today) choreNameByAssignmentId.set(r.assignment_id, r.chore_name);
+  const memberNameByAssignmentId = new Map<string, string>();
+  for (const r of today) memberNameByAssignmentId.set(r.assignment_id, r.member_name);
+
   return (
     <main className="mx-auto max-w-md px-6 pt-10 pb-8">
       <Header
@@ -248,6 +318,26 @@ export default async function Home({
           Logged. Receipt is in.
         </p>
       ) : null}
+      {claim_sent ? (
+        <p className="mt-6 rounded-xl border border-amber-700/40 bg-amber-900/30 px-4 py-3 text-sm text-amber-200">
+          Ask sent. Waiting for a parent to approve.
+        </p>
+      ) : null}
+      {claim_resubmitted ? (
+        <p className="mt-6 rounded-xl border border-slate-700/40 bg-slate-800/50 px-4 py-3 text-sm text-slate-300">
+          You already asked for that one — still waiting on approval.
+        </p>
+      ) : null}
+      {claim_approved ? (
+        <p className="mt-6 rounded-xl border border-emerald-700/40 bg-emerald-900/30 px-4 py-3 text-sm text-emerald-200">
+          Approved. Chore moved to them.
+        </p>
+      ) : null}
+      {claim_declined ? (
+        <p className="mt-6 rounded-xl border border-slate-700/40 bg-slate-800/50 px-4 py-3 text-sm text-slate-300">
+          Claim declined.
+        </p>
+      ) : null}
       {error ? (
         <p
           role="alert"
@@ -255,6 +345,64 @@ export default async function Home({
         >
           {error}
         </p>
+      ) : null}
+
+      {me.role === "parent" && pendingClaimsForApproval.length > 0 ? (
+        <section className="mt-8 rounded-3xl border border-amber-400/30 bg-gradient-to-br from-amber-300/15 via-amber-300/5 to-transparent p-5">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-amber-200/80">
+            Asks waiting on you
+          </p>
+          <p className="mt-1 font-display text-xl font-bold text-slate-50">
+            {pendingClaimsForApproval.length}{" "}
+            {pendingClaimsForApproval.length === 1 ? "kid wants" : "kids want"} a chore
+          </p>
+          <ul className="mt-4 space-y-3">
+            {pendingClaimsForApproval.map((c) => {
+              const choreName =
+                choreNameByAssignmentId.get(c.assignment_id) ?? "(unknown chore)";
+              const originalAssignee =
+                memberNameByAssignmentId.get(c.assignment_id) ?? "someone";
+              return (
+                <li
+                  key={c.id}
+                  className="rounded-2xl border border-white/10 bg-slate-900/60 p-3"
+                >
+                  <p className="text-sm font-semibold text-slate-100">
+                    {c.requester?.name ?? "?"} wants{" "}
+                    <span className="text-amber-200">{choreName}</span> for{" "}
+                    <span className="text-emerald-300">
+                      ${Number(c.requested_amount).toFixed(2)}
+                    </span>
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-400">
+                    Currently on {originalAssignee}
+                    {c.notes ? ` · "${c.notes}"` : ""}
+                  </p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <form action={approveChoreClaim}>
+                      <input type="hidden" name="claim_id" value={c.id} />
+                      <button
+                        type="submit"
+                        className="w-full rounded-xl bg-emerald-300 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-slate-950 transition hover:bg-emerald-200"
+                      >
+                        ✓ Approve
+                      </button>
+                    </form>
+                    <form action={declineChoreClaim}>
+                      <input type="hidden" name="claim_id" value={c.id} />
+                      <button
+                        type="submit"
+                        className="w-full rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-rose-300 transition hover:bg-rose-500/20"
+                      >
+                        ✕ Decline
+                      </button>
+                    </form>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       ) : null}
 
       <section className="mt-10 space-y-4">
@@ -355,6 +503,11 @@ export default async function Home({
           </p>
           {otherToday.map((row) => {
             const rowAccent = memberStyle(row.member_name).accent;
+            const canClaim =
+              me.role !== "parent" && row.status === "pending";
+            const alreadyAsked = myPendingClaimAssignmentIds.has(
+              row.assignment_id,
+            );
             return (
               <div
                 key={row.assignment_id}
@@ -362,28 +515,67 @@ export default async function Home({
                   borderLeftWidth: "4px",
                   borderLeftColor: rowAccent,
                 }}
-                className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-sm ${
+                className={`space-y-2 rounded-2xl border px-4 py-3 text-sm ${
                   row.status === "done"
                     ? "border-white/5 bg-white/[0.02] opacity-60"
                     : "border-white/10 bg-white/[0.03]"
                 }`}
               >
-                <Avatar name={row.member_name} size={36} />
-                <div className="flex-1">
-                  <p
-                    className={`text-slate-100 ${
-                      row.status === "done" ? "line-through" : ""
-                    }`}
-                  >
-                    {row.chore_name}
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    {row.member_name} ·{" "}
-                    {row.status === "done"
-                      ? "done ✓"
-                      : formatLocalTime(row.due_at)}
-                  </p>
+                <div className="flex items-center gap-3">
+                  <Avatar name={row.member_name} size={36} />
+                  <div className="flex-1">
+                    <p
+                      className={`text-slate-100 ${
+                        row.status === "done" ? "line-through" : ""
+                      }`}
+                    >
+                      {row.chore_name}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {row.member_name} ·{" "}
+                      {row.status === "done"
+                        ? "done ✓"
+                        : formatLocalTime(row.due_at)}
+                    </p>
+                  </div>
                 </div>
+
+                {canClaim && alreadyAsked ? (
+                  <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+                    ⏳ Waiting for a parent to approve your ask
+                  </p>
+                ) : null}
+
+                {canClaim && !alreadyAsked ? (
+                  <form
+                    action={requestChoreClaim}
+                    className="flex items-center gap-2"
+                  >
+                    <input
+                      type="hidden"
+                      name="assignment_id"
+                      value={row.assignment_id}
+                    />
+                    <span className="text-base font-bold text-emerald-300">$</span>
+                    <input
+                      name="amount"
+                      type="number"
+                      inputMode="decimal"
+                      step="0.50"
+                      min="0"
+                      required
+                      placeholder="5"
+                      aria-label={`Amount to do ${row.chore_name}`}
+                      className="w-20 rounded-lg border border-white/10 bg-slate-900 px-2 py-1.5 text-sm text-slate-100 focus:border-emerald-400 focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      className="ml-auto rounded-lg bg-emerald-300 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-950 transition hover:bg-emerald-200"
+                    >
+                      I&apos;ll do it
+                    </button>
+                  </form>
+                ) : null}
               </div>
             );
           })}
