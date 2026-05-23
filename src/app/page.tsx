@@ -420,6 +420,15 @@ export default async function Home({
           // Family chores keep their yellow; user-assigned chores use the
           // active user's colour. row.member_name is "Family" or a name.
           const rowAccent = memberStyle(row.member_name).accent;
+          // A "Family" chore (member_name === "Family") shows up in everyone's
+          // "For you, tonight" list. If a kid wants paid to take it, let them
+          // ask the same way they would for someone else's chore.
+          const isFamilyChore = row.member_name === "Family";
+          const kidCanAskForBounty =
+            isFamilyChore && me.role !== "parent";
+          const alreadyAsked = myPendingClaimAssignmentIds.has(
+            row.assignment_id,
+          );
           return (
           <article
             key={row.assignment_id}
@@ -442,9 +451,9 @@ export default async function Home({
                 {row.member_name} · {formatLocalTime(row.due_at)}
               </p>
             </div>
-            <div className="px-6 py-5">
+            <div className="px-6 py-5 space-y-3">
               {row.chore_instructions_md ? (
-                <details className="mb-5 group">
+                <details className="mb-2 group">
                   <summary className="cursor-pointer text-sm font-medium text-amber-300/90 group-open:text-amber-200">
                     How to (tap to open)
                   </summary>
@@ -468,6 +477,48 @@ export default async function Home({
                   </span>
                 </button>
               </form>
+
+              {kidCanAskForBounty && alreadyAsked ? (
+                <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+                  ⏳ Waiting for a parent to approve your ask for this one
+                </p>
+              ) : null}
+
+              {kidCanAskForBounty && !alreadyAsked ? (
+                <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-emerald-300/80">
+                    Or ask for money to do it
+                  </p>
+                  <form
+                    action={requestChoreClaim}
+                    className="mt-2 flex items-center gap-2"
+                  >
+                    <input
+                      type="hidden"
+                      name="assignment_id"
+                      value={row.assignment_id}
+                    />
+                    <span className="text-base font-bold text-emerald-300">$</span>
+                    <input
+                      name="amount"
+                      type="number"
+                      inputMode="decimal"
+                      step="0.50"
+                      min="0"
+                      required
+                      placeholder="5"
+                      aria-label={`Amount to do ${row.chore_name}`}
+                      className="w-20 rounded-lg border border-white/10 bg-slate-900 px-2 py-1.5 text-sm text-slate-100 focus:border-emerald-400 focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      className="ml-auto rounded-lg bg-emerald-300 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-950 transition hover:bg-emerald-200"
+                    >
+                      Ask for it
+                    </button>
+                  </form>
+                </div>
+              ) : null}
             </div>
           </article>
           );
