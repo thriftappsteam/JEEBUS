@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 type Chore = {
   id: string;
   name: string;
-  cadence: "Daily" | "Weekly" | "Fortnightly" | "Monthly" | null;
+  cadence: "Daily" | "Weekly" | "Fortnightly" | "Monthly" | "OnDemand" | null;
   day_hint:
     | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun" | "Anytime"
     | null;
@@ -34,7 +34,7 @@ function formatChoreTime(timeStr: string | null): string {
   return `${hour12}${mm} ${ampm}`;
 }
 
-const CADENCE_ORDER: Chore["cadence"][] = ["Daily", "Weekly", "Fortnightly", "Monthly"];
+const CADENCE_ORDER: Chore["cadence"][] = ["Daily", "Weekly", "Fortnightly", "Monthly", "OnDemand"];
 
 const DAY_ORDER: Record<string, number> = {
   Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7, Anytime: 99,
@@ -45,6 +45,7 @@ const CADENCE_TINT: Record<string, string> = {
   Weekly: "linear-gradient(135deg, rgba(56,189,248,0.20), rgba(251,191,36,0.18))",
   Fortnightly: "linear-gradient(135deg, rgba(192,132,252,0.22), rgba(56,189,248,0.18))",
   Monthly: "linear-gradient(135deg, rgba(52,211,153,0.20), rgba(251,191,36,0.18))",
+  OnDemand: "linear-gradient(135deg, rgba(148,163,184,0.20), rgba(251,191,36,0.14))",
 };
 
 const CADENCE_HINT: Record<string, string> = {
@@ -52,21 +53,32 @@ const CADENCE_HINT: Record<string, string> = {
   Weekly: "Once a week",
   Fortnightly: "Every other week",
   Monthly: "Once a month",
+  OnDemand: "Won't auto-appear — you decide when",
+};
+
+const CADENCE_TITLE: Record<string, string> = {
+  Daily: "Daily",
+  Weekly: "Weekly",
+  Fortnightly: "Fortnightly",
+  Monthly: "Monthly",
+  OnDemand: "As needed",
 };
 
 export default async function ChoresPage({
   searchParams,
 }: {
-  searchParams: Promise<{ added?: string; saved?: string; removed?: string }>;
+  searchParams: Promise<{ added?: string; saved?: string; removed?: string; scheduled?: string }>;
 }) {
-  const { added, saved, removed } = await searchParams;
+  const { added, saved, removed, scheduled } = await searchParams;
   const toastMessage = added
     ? "Chore added"
     : saved
       ? "Changes saved"
       : removed
         ? "Chore removed"
-        : null;
+        : scheduled
+          ? "Chore scheduled"
+          : null;
 
   const supabase = await createClient();
   const cookieStore = await cookies();
@@ -181,7 +193,7 @@ export default async function ChoresPage({
                   {CADENCE_HINT[cadence] ?? "Other"}
                 </p>
                 <p className="font-display text-2xl font-bold text-white">
-                  {cadence}{" "}
+                  {CADENCE_TITLE[cadence] ?? cadence}{" "}
                   <span className="text-base text-white/70">· {arr.length}</span>
                 </p>
               </header>
@@ -190,8 +202,9 @@ export default async function ChoresPage({
                   const isMine =
                     memberName != null && c.member?.name === memberName;
                   const accent = memberStyle(c.member?.name ?? "Family").accent;
+                  const isOnDemand = c.cadence === "OnDemand";
                   return (
-                    <li key={c.id}>
+                    <li key={c.id} className="space-y-1.5">
                       <Link
                         href={`/chores/${c.id}`}
                         style={{
@@ -236,12 +249,18 @@ export default async function ChoresPage({
                           >
                             {c.member?.name ?? "Family"}
                           </span>
-                          <span className="text-slate-500">
-                            {c.day_hint === "Anytime" ? "anytime" : c.day_hint}
-                          </span>
-                          <span className="text-slate-500">
-                            ⏰ {formatChoreTime(c.due_time)}
-                          </span>
+                          {isOnDemand ? (
+                            <span className="text-slate-500">no fixed day</span>
+                          ) : (
+                            <>
+                              <span className="text-slate-500">
+                                {c.day_hint === "Anytime" ? "anytime" : c.day_hint}
+                              </span>
+                              <span className="text-slate-500">
+                                ⏰ {formatChoreTime(c.due_time)}
+                              </span>
+                            </>
+                          )}
                         </p>
                         {c.notes ? (
                           <p className="mt-1.5 line-clamp-2 text-[11px] text-slate-400">
@@ -250,6 +269,14 @@ export default async function ChoresPage({
                         ) : null}
                       </div>
                       </Link>
+                      {isOnDemand ? (
+                        <Link
+                          href={`/chores/${c.id}/schedule`}
+                          className="block w-full rounded-xl border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-center text-[11px] font-bold uppercase tracking-[0.14em] text-amber-200 transition hover:bg-amber-300/20"
+                        >
+                          📅 Mark as due
+                        </Link>
+                      ) : null}
                     </li>
                   );
                 })}

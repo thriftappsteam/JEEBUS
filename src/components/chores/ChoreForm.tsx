@@ -5,9 +5,10 @@ type Member = { id: string; name: string; role: string };
 export type ChoreFormValues = {
   id?: string;
   name?: string;
-  cadence?: "Daily" | "Weekly" | "Fortnightly" | "Monthly";
+  cadence?: "Daily" | "Weekly" | "Fortnightly" | "Monthly" | "OnDemand";
   day_hint?:
-    | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun" | "Anytime";
+    | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun" | "Anytime"
+    | null;
   default_assignee?: string | null;
   pays_aud?: number | null;
   paid_by_member_id?: string | null;
@@ -16,7 +17,14 @@ export type ChoreFormValues = {
   due_time?: string | null;
 };
 
-const CADENCES = ["Daily", "Weekly", "Fortnightly", "Monthly"] as const;
+const CADENCES = ["Daily", "Weekly", "Fortnightly", "Monthly", "OnDemand"] as const;
+const CADENCE_LABELS: Record<(typeof CADENCES)[number], string> = {
+  Daily: "Daily",
+  Weekly: "Weekly",
+  Fortnightly: "Fortnightly",
+  Monthly: "Monthly",
+  OnDemand: "As needed (you decide when)",
+};
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Anytime"] as const;
 
 export function ChoreForm({
@@ -57,7 +65,7 @@ export function ChoreForm({
           >
             {CADENCES.map((c) => (
               <option key={c} value={c}>
-                {c}
+                {CADENCE_LABELS[c]}
               </option>
             ))}
           </select>
@@ -76,6 +84,9 @@ export function ChoreForm({
           </select>
         </Field>
       </div>
+      <p className="-mt-2 text-[11px] text-slate-500">
+        For <span className="text-slate-300">As needed</span> chores the day is ignored — you pick a date each time you want it done.
+      </p>
 
       <Field label="Reminder time">
         <input

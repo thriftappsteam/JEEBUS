@@ -4,10 +4,10 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
-type Cadence = "Daily" | "Weekly" | "Fortnightly" | "Monthly";
+type Cadence = "Daily" | "Weekly" | "Fortnightly" | "Monthly" | "OnDemand";
 type DayHint = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun" | "Anytime";
 
-function buildRecurrenceRule(cadence: Cadence, dayHint: DayHint): string {
+function buildRecurrenceRule(cadence: Cadence, dayHint: DayHint): string | null {
   const dayMap: Record<string, string> = {
     Mon: "MO", Tue: "TU", Wed: "WE", Thu: "TH", Fri: "FR", Sat: "SA", Sun: "SU",
   };
@@ -23,6 +23,10 @@ function buildRecurrenceRule(cadence: Cadence, dayHint: DayHint): string {
         : "FREQ=WEEKLY;INTERVAL=2";
     case "Monthly":
       return byday ? `FREQ=MONTHLY;BYDAY=${byday}` : "FREQ=MONTHLY";
+    case "OnDemand":
+      // As-needed chores have no recurrence — the generator skips them.
+      // Lisa decides when each one is due via the "Mark as due" flow.
+      return null;
     default:
       return "FREQ=DAILY";
   }
@@ -41,7 +45,9 @@ async function getHouseholdId(): Promise<string | null> {
 function readForm(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const cadence = String(formData.get("cadence") ?? "Weekly") as Cadence;
-  const dayHint = String(formData.get("day_hint") ?? "Anytime") as DayHint;
+  // OnDemand chores have no day-of-week — they only fire when Lisa marks one due.
+  const dayHintRaw = String(formData.get("day_hint") ?? "Anytime") as DayHint;
+  const dayHint: DayHint = cadence === "OnDemand" ? "Anytime" : dayHintRaw;
   const assigneeRaw = String(formData.get("default_assignee") ?? "");
   const default_assignee = assigneeRaw === "FAMILY" || !assigneeRaw ? null : assigneeRaw;
   const paysRaw = String(formData.get("pays_aud") ?? "").trim();
@@ -81,7 +87,7 @@ export async function addChore(formData: FormData) {
     default_assignee: data.default_assignee,
     recurrence_rule: buildRecurrenceRule(data.cadence, data.dayHint),
     cadence: data.cadence,
-    day_hint: data.dayHint,
+    day_hint: data.cadence === "OnDemand" ? null : data.dayHint,
     notes: data.notes,
     pays_aud: data.pays_aud,
     paid_by_member_id: data.paid_by_member_id,
@@ -110,7 +116,7 @@ export async function updateChore(formData: FormData) {
       default_assignee: data.default_assignee,
       recurrence_rule: buildRecurrenceRule(data.cadence, data.dayHint),
       cadence: data.cadence,
-      day_hint: data.dayHint,
+      day_hint: data.cadence === "OnDemand" ? null : data.dayHint,
       notes: data.notes,
       pays_aud: data.pays_aud,
       paid_by_member_id: data.paid_by_member_id,
@@ -137,6 +143,43 @@ export async function updateChore(formData: FormData) {
   revalidatePath("/chores");
   revalidatePath("/");
   redirect("/chores?saved=1");
+}
+
+/**
+ * Mark an on-demand chore as due on a specific date for a specific person.
+ * Inserts a single pending assignment — the chore stays OnDemand.
+ * Used from /chores/[id]/schedule when Lisa decides "the lawn needs mowing this Saturday".
+ */
+export async function markChoreDue(formData: FormData) {
+  const choreId = String(formData.get("chore_id") ?? "");
+  const dueDate = String(formData.get("due_date") ?? ""); // "YYYY-MM-DD"
+  const assigneeRaw = String(formData.get("member_id") ?? "");
+  const member_id = assigneeRaw === "FAMILY" || !assigneeRaw ? null : assigneeRaw;
+  const dueTimeRaw = String(formData.get("due_time") ?? "").trim();
+  const due_time = /^\d{2}:\d{2}$/.test(dueTimeRaw) ? `${dueTimeRaw}:00` : "18:00:00";
+
+  if (!choreId) redirect("/chores?error=Missing+chore+id");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate))
+    redirect(`/chores/${choreId}/schedule?error=Pick+a+date`);
+
+  const supabase = await createClient();
+
+  // Build a Melbourne-local timestamptz so the reminder fires on the right wall-clock time.
+  const dueAtIso = `${dueDate} ${due_time} Australia/Melbourne`;
+
+  const { error } = await supabase.from("assignments").insert({
+    chore_id: choreId,
+    member_id,
+    due_at: dueAtIso,
+    status: "pending",
+  });
+
+  if (error)
+    redirect(`/chores/${choreId}/schedule?error=${encodeURIComponent(error.message)}`);
+
+  revalidatePath("/chores");
+  revalidatePath("/");
+  redirect("/chores?scheduled=1");
 }
 
 export async function removeChore(formData: FormData) {
