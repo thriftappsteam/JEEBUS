@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { ruleWarning, planningWeekMonday } from "@/lib/utils/rules";
 import { Header } from "@/components/brand/Header";
 import { recipeStyle } from "@/lib/brand/recipeStyle";
-import { autoFillDinners, shuffleDinners } from "@/app/actions/meals";
+import { autoFillMeals, shuffleMeals } from "@/app/actions/meals";
 
 export const dynamic = "force-dynamic";
 
@@ -120,9 +120,14 @@ export default async function MealsPage() {
       <div className="mt-8 space-y-10">
         {weeks.map((w, weekIndex) => {
           const plannedCount = w.days.filter((d) => d.row).length;
-          const emptyDinnerCount = w.days.filter(
-            (d) => !d.row?.dinner,
-          ).length;
+          // Count every empty meal slot across all 7 days × 3 meals = max 21.
+          const emptyMealCount = w.days.reduce((acc, d) => {
+            let n = 0;
+            if (!d.row?.breakfast) n++;
+            if (!d.row?.lunch) n++;
+            if (!d.row?.dinner) n++;
+            return acc + n;
+          }, 0);
           // Protect "this week" and "next week" from accidental shuffle — those
           // are usually the ones Lisa has curated by hand. Shuffle starts on
           // the week after next.
@@ -137,8 +142,8 @@ export default async function MealsPage() {
                   {fmt(w.mondayIso)} – {fmt(w.sundayIso)}
                 </span>
               </div>
-              {emptyDinnerCount > 0 ? (
-                <form action={autoFillDinners} className="mb-4">
+              {emptyMealCount > 0 ? (
+                <form action={autoFillMeals} className="mb-4">
                   <input
                     type="hidden"
                     name="week_monday"
@@ -148,16 +153,17 @@ export default async function MealsPage() {
                     type="submit"
                     className="w-full rounded-xl border border-amber-300/30 bg-amber-300/10 px-4 py-2.5 text-sm font-semibold text-amber-200 transition hover:bg-amber-300/20"
                   >
-                    ✨ Auto-suggest dinners for this week
+                    ✨ Auto-suggest meals for this week
                   </button>
                   <p className="mt-1.5 text-center text-[10px] text-slate-500">
-                    Fills {emptyDinnerCount} empty{" "}
-                    {emptyDinnerCount === 1 ? "dinner" : "dinners"} using your
-                    family&apos;s rules. Kid favourites on school nights.
+                    Fills {emptyMealCount} empty{" "}
+                    {emptyMealCount === 1 ? "meal" : "meals"} (breakfast, lunch
+                    and dinner) using your family&apos;s rules. Kid favourites
+                    on school nights.
                   </p>
                 </form>
               ) : allowShuffle ? (
-                <form action={shuffleDinners} className="mb-4">
+                <form action={shuffleMeals} className="mb-4">
                   <input
                     type="hidden"
                     name="week_monday"
@@ -167,14 +173,15 @@ export default async function MealsPage() {
                     type="submit"
                     className="w-full rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-xs font-medium text-slate-400 transition hover:bg-white/[0.06] hover:text-slate-200"
                   >
-                    🎲 Shuffle these dinners
+                    🎲 Shuffle these meals
                   </button>
                   <p className="mt-1.5 text-center text-[10px] text-slate-600">
-                    Replaces all 7 dinners with a fresh set of picks.
+                    Replaces all 21 meals (7 breakfasts, 7 lunches, 7 dinners)
+                    with a fresh set of picks.
                   </p>
                 </form>
               ) : null}
-              {plannedCount === 0 && emptyDinnerCount === 0 ? (
+              {plannedCount === 0 && emptyMealCount === 0 ? (
                 <p className="mb-3 text-xs text-slate-500">
                   Nothing planned for this week yet.
                 </p>

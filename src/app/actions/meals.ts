@@ -39,10 +39,34 @@ type Recipe = {
 type ExistingDay = {
   id: string;
   day_date: string;
+  breakfast_recipe_id: string | null;
+  lunch_recipe_id: string | null;
   dinner_recipe_id: string | null;
 };
 
-export async function autoFillDinners(formData: FormData) {
+type SlotKind = "breakfast" | "lunch" | "dinner";
+const SLOTS: SlotKind[] = ["breakfast", "lunch", "dinner"];
+
+function existingIdFor(row: ExistingDay | undefined, slot: SlotKind): string | null {
+  if (!row) return null;
+  if (slot === "breakfast") return row.breakfast_recipe_id;
+  if (slot === "lunch") return row.lunch_recipe_id;
+  return row.dinner_recipe_id;
+}
+
+type MealUpdate = {
+  breakfast_recipe_id?: string;
+  lunch_recipe_id?: string;
+  dinner_recipe_id?: string;
+};
+
+function setSlotOnUpdate(updates: MealUpdate, slot: SlotKind, recipeId: string): void {
+  if (slot === "breakfast") updates.breakfast_recipe_id = recipeId;
+  else if (slot === "lunch") updates.lunch_recipe_id = recipeId;
+  else updates.dinner_recipe_id = recipeId;
+}
+
+export async function autoFillMeals(formData: FormData) {
   const weekMonday = String(formData.get("week_monday") ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekMonday)) return;
 
@@ -60,10 +84,13 @@ export async function autoFillDinners(formData: FormData) {
   const days = Array.from({ length: 7 }, (_, i) => addDaysIso(weekMonday, i));
   const sunday = days[6];
 
-  // Fetch any rows that already exist for this week.
+  // Fetch any rows that already exist for this week — we want to leave any
+  // slot Lisa has already filled in alone, and only fill the empty ones.
   const { data: existingRows } = await supabase
     .from("meal_plan_days")
-    .select("id, day_date, dinner_recipe_id")
+    .select(
+      "id, day_date, breakfast_recipe_id, lunch_recipe_id, dinner_recipe_id",
+    )
     .gte("day_date", weekMonday)
     .lte("day_date", sunday);
 
@@ -71,71 +98,106 @@ export async function autoFillDinners(formData: FormData) {
   const existingByDate = new Map<string, ExistingDay>();
   for (const r of existing) existingByDate.set(r.day_date, r);
 
-  // Eligible dinner recipes — has 'dinner' in meal_types, is active,
-  // and has no unsafe tags.
+  // Fetch all active recipes once, bucket per slot, drop unsafe.
   const { data: recipes } = await supabase
     .from("recipes")
     .select("id, name, contains, is_kid_favourite, meal_types")
-    .contains("meal_types", ["dinner"])
     .eq("is_active", true);
 
-  const eligible = ((recipes as Recipe[] | null) ?? []).filter((r) => {
+  const safeRecipes = ((recipes as Recipe[] | null) ?? []).filter((r) => {
     const c = r.contains ?? [];
     return !c.some((tag) => UNSAFE_CONTAINS.includes(tag));
   });
 
-  // Avoid picking a recipe already in this week's existing dinners.
-  const usedIds = new Set<string>();
+  // A recipe tagged ['lunch','dinner'] sits in both lunch and dinner pools.
+  const pools: Record<SlotKind, Recipe[]> = {
+    breakfast: safeRecipes.filter((r) => (r.meal_types ?? []).includes("breakfast")),
+    lunch: safeRecipes.filter((r) => (r.meal_types ?? []).includes("lunch")),
+    dinner: safeRecipes.filter((r) => (r.meal_types ?? []).includes("dinner")),
+  };
+
+  // Per-slot "used in this week" set, seeded from whatever's already there
+  // so we don't accidentally duplicate against Lisa's hand-picks.
+  const used: Record<SlotKind, Set<string>> = {
+    breakfast: new Set<string>(),
+    lunch: new Set<string>(),
+    dinner: new Set<string>(),
+  };
   for (const r of existing) {
-    if (r.dinner_recipe_id) usedIds.add(r.dinner_recipe_id);
+    if (r.breakfast_recipe_id) used.breakfast.add(r.breakfast_recipe_id);
+    if (r.lunch_recipe_id) used.lunch.add(r.lunch_recipe_id);
+    if (r.dinner_recipe_id) used.dinner.add(r.dinner_recipe_id);
   }
 
-  // Shuffled pools so consecutive auto-fills don't always look identical.
-  const kidFavs = shuffle(eligible.filter((r) => r.is_kid_favourite));
-  const others = shuffle(eligible.filter((r) => !r.is_kid_favourite));
+  // Shuffled pools per slot, split by kid-favourite vs not. Keeps consecutive
+  // auto-fills from looking identical.
+  const shuffledPools: Record<
+    SlotKind,
+    { kidFavs: Recipe[]; others: Recipe[] }
+  > = {
+    breakfast: {
+      kidFavs: shuffle(pools.breakfast.filter((r) => r.is_kid_favourite)),
+      others: shuffle(pools.breakfast.filter((r) => !r.is_kid_favourite)),
+    },
+    lunch: {
+      kidFavs: shuffle(pools.lunch.filter((r) => r.is_kid_favourite)),
+      others: shuffle(pools.lunch.filter((r) => !r.is_kid_favourite)),
+    },
+    dinner: {
+      kidFavs: shuffle(pools.dinner.filter((r) => r.is_kid_favourite)),
+      others: shuffle(pools.dinner.filter((r) => !r.is_kid_favourite)),
+    },
+  };
 
-  function pickFor(isSchoolNight: boolean): string | null {
+  function pickFor(slot: SlotKind, isSchoolNight: boolean): string | null {
     // Mon-Fri prefer kid favourites; weekends treat all eligible equally.
-    const primary = isSchoolNight ? kidFavs : others;
-    const secondary = isSchoolNight ? others : kidFavs;
+    const pool = shuffledPools[slot];
+    const primary = isSchoolNight ? pool.kidFavs : pool.others;
+    const secondary = isSchoolNight ? pool.others : pool.kidFavs;
     for (const r of primary) {
-      if (!usedIds.has(r.id)) {
-        usedIds.add(r.id);
+      if (!used[slot].has(r.id)) {
+        used[slot].add(r.id);
         return r.id;
       }
     }
     for (const r of secondary) {
-      if (!usedIds.has(r.id)) {
-        usedIds.add(r.id);
+      if (!used[slot].has(r.id)) {
+        used[slot].add(r.id);
         return r.id;
       }
     }
-    // Library smaller than 7 unique safe recipes? Relax and allow repeats.
-    const all = [...kidFavs, ...others];
+    // Pool smaller than empty-slot count? Relax and allow a repeat.
+    const all = [...pool.kidFavs, ...pool.others];
     if (all.length > 0) return all[0].id;
     return null;
   }
 
   for (const dayIso of days) {
     const row = existingByDate.get(dayIso);
-    if (row?.dinner_recipe_id) continue; // already planned, leave alone
-
     const dow = getDow(dayIso);
     const isSchoolNight = dow >= 1 && dow <= 5; // Mon-Fri
-    const recipeId = pickFor(isSchoolNight);
-    if (!recipeId) continue;
+
+    const updates: MealUpdate = {};
+    for (const slot of SLOTS) {
+      const filled = existingIdFor(row, slot);
+      if (filled) continue; // leave hand-picked slots alone
+      const id = pickFor(slot, isSchoolNight);
+      if (id) setSlotOnUpdate(updates, slot, id);
+    }
+
+    if (Object.keys(updates).length === 0) continue;
 
     if (row) {
       await supabase
         .from("meal_plan_days")
-        .update({ dinner_recipe_id: recipeId })
+        .update(updates)
         .eq("id", row.id);
     } else {
       await supabase.from("meal_plan_days").insert({
         household_id: householdId,
         day_date: dayIso,
-        dinner_recipe_id: recipeId,
         eating_at_home: true,
+        ...updates,
       });
     }
   }
@@ -143,9 +205,10 @@ export async function autoFillDinners(formData: FormData) {
   revalidatePath("/meals");
 }
 
-// Clear all dinners in the week, then re-fill from scratch. Used by the
-// "Shuffle these dinners" button when Lisa wants a different set of picks.
-export async function shuffleDinners(formData: FormData) {
+// Clear all 3 meal slots for the week, then re-fill from scratch. Used by
+// the "Shuffle these meals" button when Lisa wants a different set of picks.
+// Only allowed from week 2+ in the UI to protect curated weeks.
+export async function shuffleMeals(formData: FormData) {
   const weekMonday = String(formData.get("week_monday") ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekMonday)) return;
 
@@ -154,10 +217,14 @@ export async function shuffleDinners(formData: FormData) {
 
   await supabase
     .from("meal_plan_days")
-    .update({ dinner_recipe_id: null })
+    .update({
+      breakfast_recipe_id: null,
+      lunch_recipe_id: null,
+      dinner_recipe_id: null,
+    })
     .gte("day_date", weekMonday)
     .lte("day_date", sunday);
 
   // Re-use the fill logic — same shape, same rules.
-  await autoFillDinners(formData);
+  await autoFillMeals(formData);
 }
