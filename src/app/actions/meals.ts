@@ -72,12 +72,18 @@ export async function autoFillMeals(formData: FormData) {
 
   const supabase = await createClient();
 
-  const { data: hh } = await supabase
-    .from("households")
-    .select("id")
-    .eq("name", "McTonkin")
-    .maybeSingle();
-  const householdId = hh?.id;
+  const { getCurrentMember } = await import("@/lib/hyetas/whoami");
+  const me = await getCurrentMember();
+  let householdId = me?.household_id ?? null;
+  if (!householdId) {
+    const { data: hh } = await supabase
+      .from("households")
+      .select("id")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    householdId = hh?.id ?? null;
+  }
   if (!householdId) return;
 
   // 7 days starting at the given Monday.

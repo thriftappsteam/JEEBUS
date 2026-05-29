@@ -84,7 +84,7 @@ const TABS: Tab[] = [
   },
   {
     href: "/money",
-    label: "Earnings",
+    label: "Money",
     icon: (active) => (
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden>
         <rect

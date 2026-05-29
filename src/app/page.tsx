@@ -1,6 +1,10 @@
 // HYETAS Tonight page — auto-generates today's chores + shows shift banner.
+// Multi-family safe: derives household from the cookie member, falls back
+// to onboarding when no households exist yet.
+
 import Link from "next/link";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { markDone } from "@/app/actions/done";
 import { pickMember } from "@/app/actions/whoami";
@@ -15,10 +19,17 @@ import { Wordmark } from "@/components/brand/Wordmark";
 import { Avatar } from "@/components/brand/Avatar";
 import { Header } from "@/components/brand/Header";
 import { memberStyle } from "@/lib/brand/memberStyle";
+import { anyHouseholdExists } from "@/lib/hyetas/whoami";
 
 export const dynamic = "force-dynamic";
 
-type Member = { id: string; name: string; role: string };
+type Member = {
+  id: string;
+  name: string;
+  role: string;
+  household_id: string;
+  avatar_emoji: string | null;
+};
 
 type TodayRow = {
   assignment_id: string;
@@ -50,6 +61,7 @@ export default async function Home({
     claim_approved?: string;
     claim_declined?: string;
     claim_resubmitted?: string;
+    welcome?: string;
   }>;
 }) {
   const {
@@ -59,20 +71,44 @@ export default async function Home({
     claim_approved,
     claim_declined,
     claim_resubmitted,
+    welcome,
   } = await searchParams;
   const supabase = await createClient();
   const cookieStore = await cookies();
   const memberId = cookieStore.get("hyetas_member_id")?.value ?? null;
 
-  const { data: members } = await supabase
-    .from("members")
-    .select("id, name, role");
+  // If there are NO households at all, the very first user lands here ->
+  // ship them to onboarding.
+  if (!memberId) {
+    const exists = await anyHouseholdExists();
+    if (!exists) redirect("/onboarding");
+  }
 
-  const family: Member[] = (members ?? []).slice().sort((a, b) => {
-    const ai = PICKER_ORDER[a.name] ?? 99;
-    const bi = PICKER_ORDER[b.name] ?? 99;
-    return ai - bi;
-  });
+  // If we have a cookie, scope the picker to THAT member's household.
+  let householdScopeId: string | null = null;
+  if (memberId) {
+    const { data: m } = await supabase
+      .from("members")
+      .select("household_id")
+      .eq("id", memberId)
+      .maybeSingle();
+    householdScopeId = (m?.household_id as string | null) ?? null;
+  }
+
+  const membersQuery = supabase
+    .from("members")
+    .select("id, name, role, household_id, avatar_emoji");
+  const { data: members } = householdScopeId
+    ? await membersQuery.eq("household_id", householdScopeId)
+    : await membersQuery;
+
+  const family: Member[] = (members ?? [])
+    .slice()
+    .sort((a: Member, b: Member) => {
+      const ai = PICKER_ORDER[a.name] ?? 99;
+      const bi = PICKER_ORDER[b.name] ?? 99;
+      return ai - bi;
+    });
 
   const me = memberId ? family.find((m) => m.id === memberId) : null;
 
@@ -99,7 +135,7 @@ export default async function Home({
                 type="submit"
                 className="flex w-full flex-col items-center gap-3 rounded-3xl border border-white/10 bg-white/[0.04] px-4 py-6 transition hover:bg-white/[0.08]"
               >
-                <Avatar name={m.name} size={72} />
+                <Avatar name={m.name} emoji={m.avatar_emoji} size={72} />
                 <span className="text-2xl font-display font-bold text-slate-100">
                   {m.name}
                 </span>
@@ -110,6 +146,15 @@ export default async function Home({
             </form>
           ))}
         </section>
+
+        <div className="mt-8 text-center">
+          <Link
+            href="/onboarding"
+            className="text-[11px] uppercase tracking-wider text-amber-300/80 hover:text-amber-300"
+          >
+            Not your family? Start fresh or join with a code →
+          </Link>
+        </div>
 
         <p className="mt-auto pt-12 text-center text-[10px] uppercase tracking-wider text-slate-600">
           the system asks. you don&apos;t have to.
@@ -168,6 +213,30 @@ export default async function Home({
     .eq("member_id", me.id);
   const hasAnyShifts = (shiftCount ?? 0) > 0;
 
+  // Unseen new badges for celebration toast
+  const { data: unseenBadges } = await supabase
+    .from("member_badges")
+    .select(
+      `badge_code, badge:badge_catalog!badge_code(name, emoji)`,
+    )
+    .eq("member_id", me.id)
+    .eq("seen_by_member", false)
+    .order("earned_at", { ascending: false })
+    .limit(3);
+  const newBadges =
+    (unseenBadges as unknown as {
+      badge_code: string;
+      badge: { name: string; emoji: string } | null;
+    }[] | null) ?? [];
+  if (newBadges.length > 0) {
+    // Mark seen so they don't pop again on refresh
+    await supabase
+      .from("member_badges")
+      .update({ seen_by_member: true })
+      .eq("member_id", me.id)
+      .eq("seen_by_member", false);
+  }
+
   const myPending = today.filter((r) => r.is_for_me && r.status === "pending");
   const myDone = today.filter((r) => r.is_for_me && r.status === "done");
   // Hide "skipped" rows from other people's list — those are cancelled chores
@@ -178,8 +247,6 @@ export default async function Home({
   );
 
   /* -------------- Claims (kid asks to take a chore for $X) -------------- */
-  // Parents see all pending claims for today's chores so they can approve.
-  // Kids see their own pending claims so we can show "Waiting" instead of the form.
   type ClaimRow = {
     id: string;
     assignment_id: string;
@@ -222,7 +289,6 @@ export default async function Home({
   const myPendingClaimAssignmentIds = new Set(
     myOwnPendingClaims.map((c) => c.assignment_id),
   );
-  // Quick lookup: assignmentId -> chore name (used in the parent approval card)
   const choreNameByAssignmentId = new Map<string, string>();
   for (const r of today) choreNameByAssignmentId.set(r.assignment_id, r.chore_name);
   const memberNameByAssignmentId = new Map<string, string>();
@@ -243,6 +309,40 @@ export default async function Home({
           </form>
         }
       />
+
+      {welcome ? (
+        <p className="mt-6 rounded-xl border border-emerald-700/40 bg-emerald-900/30 px-4 py-3 text-sm text-emerald-200">
+          You&apos;re in. Welcome {me.name} 👋
+        </p>
+      ) : null}
+
+      {newBadges.length > 0 ? (
+        <section className="mt-6 rounded-3xl border border-amber-300/40 bg-gradient-to-br from-amber-300/15 via-amber-300/5 to-transparent p-4">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-amber-200/80">
+            🎉 New badge{newBadges.length === 1 ? "" : "s"} unlocked
+          </p>
+          <ul className="mt-3 flex gap-3 overflow-x-auto pb-1">
+            {newBadges.map((b) => (
+              <li
+                key={b.badge_code}
+                className="shrink-0 rounded-2xl border border-amber-200/20 bg-amber-300/[0.08] px-3 py-2 text-center"
+                style={{ minWidth: 110 }}
+              >
+                <p className="text-3xl">{b.badge?.emoji ?? "🏅"}</p>
+                <p className="mt-1 text-[11px] font-semibold text-amber-100">
+                  {b.badge?.name}
+                </p>
+              </li>
+            ))}
+          </ul>
+          <Link
+            href="/badges"
+            className="mt-3 inline-block text-[11px] uppercase tracking-wider text-amber-200/80 hover:text-amber-200"
+          >
+            See all badges →
+          </Link>
+        </section>
+      ) : null}
 
       {todaysShifts.map((s) => {
         const isMine = s.member_id === me.id;
@@ -422,12 +522,7 @@ export default async function Home({
         ) : null}
 
         {myPending.map((row) => {
-          // Family chores keep their yellow; user-assigned chores use the
-          // active user's colour. row.member_name is "Family" or a name.
           const rowAccent = memberStyle(row.member_name).accent;
-          // A "Family" chore (member_name === "Family") shows up in everyone's
-          // "For you, tonight" list. If a kid wants paid to take it, let them
-          // ask the same way they would for someone else's chore.
           const isFamilyChore = row.member_name === "Family";
           const kidCanAskForBounty =
             isFamilyChore && me.role !== "parent";

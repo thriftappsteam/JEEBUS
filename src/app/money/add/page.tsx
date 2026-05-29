@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { Header } from "@/components/brand/Header";
 import { addManualEarning } from "@/app/actions/earnings";
+import { getCurrentMemberAndHousehold } from "@/lib/hyetas/whoami";
 
 export const dynamic = "force-dynamic";
 
@@ -11,12 +12,25 @@ export default async function AddEarningPage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const { error } = await searchParams;
+  const ctx = await getCurrentMemberAndHousehold();
+  if (!ctx) {
+    return (
+      <main className="mx-auto max-w-md px-6 pt-10 pb-8">
+        <Header subtitle="Add earning" />
+        <p className="mt-8 text-sm text-slate-400">
+          Pick a member on the home screen first.
+        </p>
+      </main>
+    );
+  }
+  const { household } = ctx;
   const supabase = await createClient();
 
   const { data: members } = await supabase
     .from("members")
     .select("id, name, role")
-    .eq("role", "kid")
+    .eq("household_id", household.id)
+    .in("role", ["kid", "teen"])
     .order("name");
   const kids = members ?? [];
 
