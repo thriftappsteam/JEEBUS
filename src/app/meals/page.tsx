@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { ruleWarning, planningWeekMonday } from "@/lib/utils/rules";
+import { ruleWarning, mealsWeekMonday } from "@/lib/utils/rules";
 import { Header } from "@/components/brand/Header";
 import { recipeStyle } from "@/lib/brand/recipeStyle";
 import { autoFillMeals, shuffleMeals } from "@/app/actions/meals";
@@ -72,7 +72,9 @@ export default async function MealsPage() {
   }
 
   // Build the three-week window.
-  const week0Monday = planningWeekMonday();
+  // mealsWeekMonday (not planningWeekMonday) — Sunday counts as the end
+  // of this week so Sunday dinner stays visible.
+  const week0Monday = mealsWeekMonday();
   const weeks: WeekBlock[] = WEEK_LABELS.map((label, i) => {
     const mondayIso = addDaysIso(week0Monday, i * 7);
     const sundayIso = addDaysIso(mondayIso, 6);

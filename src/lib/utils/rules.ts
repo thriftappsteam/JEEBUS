@@ -29,6 +29,10 @@ export function planningWeekMonday(d: Date = new Date()): string {
   // auto-planner has already drafted next week's plan, Mon delivery is
   // tomorrow, and Lisa is mentally on next week — not the one ending today.
   // Mon..Sat: roll back to this week's Monday.
+  //
+  // NOTE: This is the grocery/delivery-flow rule. For the /meals view we
+  // want Sunday to stay as the END of this week (so Sunday dinner is still
+  // visible) — use mealsWeekMonday() for that.
   const localStr = d.toLocaleDateString("en-CA", { timeZone: "Australia/Melbourne" });
   const local = new Date(localStr + "T00:00:00Z");
   const day = local.getUTCDay(); // 0 Sun .. 6 Sat
@@ -37,6 +41,23 @@ export function planningWeekMonday(d: Date = new Date()): string {
   } else {
     local.setUTCDate(local.getUTCDate() - (day - 1));
   }
+  return local.toISOString().slice(0, 10);
+}
+
+/**
+ * Like planningWeekMonday but Sunday counts as the END of this week, not
+ * the start of next. So on Sunday, returns the Monday 6 days ago.
+ * Used by /meals so Sunday dinner doesn't disappear when you open the app
+ * on a Sunday.
+ */
+export function mealsWeekMonday(d: Date = new Date()): string {
+  const localStr = d.toLocaleDateString("en-CA", { timeZone: "Australia/Melbourne" });
+  const local = new Date(localStr + "T00:00:00Z");
+  const day = local.getUTCDay(); // 0 Sun .. 6 Sat
+  // Treat Sun as day 7 of the prior week → walk back 6 days. Mon..Sat
+  // walk back day-1 days (Mon = 0 back, Tue = 1 back, …).
+  const daysBack = day === 0 ? 6 : day - 1;
+  local.setUTCDate(local.getUTCDate() - daysBack);
   return local.toISOString().slice(0, 10);
 }
 
