@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentMember } from "@/lib/hyetas/whoami";
 import {
   addStandingItem,
   removeStandingItem,
@@ -27,10 +28,14 @@ type StandingRow = {
 };
 
 export async function StandingItemsPanel() {
+  // Household-scoped: standing items belong to the signed-in family only.
+  const me = await getCurrentMember();
+  if (!me) return null;
   const supabase = await createClient();
   const { data: rows } = await supabase
     .from("standing_items")
     .select("id, item, quantity, aisle, notes, home_only")
+    .eq("household_id", me.household_id)
     .order("item");
 
   const items = (rows as StandingRow[] | null) ?? [];
