@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentMemberAndHousehold } from "@/lib/hyetas/whoami";
 import { resolveFeatures, type FeatureKey } from "@/lib/hyetas/features";
-import { STARTER_CHORES, STARTER_RECIPES } from "@/lib/hyetas/starterPacks";
+import { STARTER_CHORES } from "@/lib/hyetas/starterPacks";
+import { insertStarterRecipes } from "@/lib/hyetas/insertStarterRecipes";
 
 /** Mirror of buildRecurrenceRule in actions/chores.ts — the Tonight
  *  generator runs off recurrence_rule, so seeded chores need it too. */
@@ -151,55 +152,11 @@ export async function seedRecipes(formData: FormData) {
   const { household } = await requireParentContext();
   const picked = new Set(formData.getAll("starter_recipes").map(String));
 
-  const supabase = await createClient();
-  if (picked.size > 0) {
-    const { data: existing } = await supabase
-      .from("recipes")
-      .select("name")
-      .eq("household_id", household.id);
-    const have = new Set(
-      ((existing as { name: string }[] | null) ?? []).map((r) =>
-        r.name.toLowerCase(),
-      ),
+  const err = await insertStarterRecipes(household.id, picked);
+  if (err)
+    redirect(
+      `/onboarding/setup?step=recipes&error=${encodeURIComponent(err)}`,
     );
-
-    for (const r of STARTER_RECIPES) {
-      if (!picked.has(r.key) || have.has(r.name.toLowerCase())) continue;
-      const { data: inserted, error } = await supabase
-        .from("recipes")
-        .insert({
-          household_id: household.id,
-          name: r.name,
-          meal_types: ["dinner"],
-          servings: 4,
-          prep_time_min: r.prep_time_min,
-          instructions_md: r.instructions_md,
-          is_kid_favourite: r.is_kid_favourite,
-          is_active: true,
-        })
-        .select("id")
-        .single();
-      if (error || !inserted)
-        redirect(
-          `/onboarding/setup?step=recipes&error=${encodeURIComponent(error?.message ?? "Could not save recipes")}`,
-        );
-      const { error: ingError } = await supabase
-        .from("recipe_ingredients")
-        .insert(
-          r.ingredients.map((i) => ({
-            recipe_id: inserted!.id,
-            name: i.name,
-            quantity: i.quantity,
-            aisle: i.aisle,
-            is_pantry_staple: i.is_pantry_staple ?? false,
-          })),
-        );
-      if (ingError)
-        redirect(
-          `/onboarding/setup?step=recipes&error=${encodeURIComponent(ingError.message)}`,
-        );
-    }
-  }
 
   await finishWizard(household.id);
 }

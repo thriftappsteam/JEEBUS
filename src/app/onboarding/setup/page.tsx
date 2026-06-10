@@ -7,11 +7,8 @@ import { redirect } from "next/navigation";
 import { Mascot } from "@/components/brand/Mascot";
 import { getCurrentMemberAndHousehold } from "@/lib/hyetas/whoami";
 import { resolveFeatures } from "@/lib/hyetas/features";
-import {
-  PAIN_OPTIONS,
-  STARTER_CHORES,
-  STARTER_RECIPES,
-} from "@/lib/hyetas/starterPacks";
+import { PAIN_OPTIONS, STARTER_CHORES } from "@/lib/hyetas/starterPacks";
+import { StarterRecipePicker } from "@/components/onboarding/StarterRecipePicker";
 import { saveSituation, saveFeatures, seedChores, seedRecipes, skipToInvite } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -314,44 +311,12 @@ export default async function SetupWizardPage({
       {step === "recipes" ? (
         <>
           <p className="mt-6 text-sm text-slate-300">
-            A few crowd-pleasers to make the meal planner useful tonight —
-            each comes with its shopping list. Tick what your family would
-            actually eat.
+            Tick what your family would actually eat — every recipe carries
+            its own shopping list. Use{" "}
+            <span className="text-slate-100">More</span> to flip through
+            other cuisines; your ticks are kept as you go.
           </p>
-          <form action={seedRecipes} className="mt-6 space-y-7">
-            <div className="space-y-2">
-              {STARTER_RECIPES.map((r) => (
-                <label
-                  key={r.key}
-                  className="flex cursor-pointer items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 transition has-[:checked]:border-emerald-300 has-[:checked]:bg-emerald-300/10"
-                >
-                  <input
-                    type="checkbox"
-                    name="starter_recipes"
-                    value={r.key}
-                    defaultChecked={r.suggested}
-                    className="h-4 w-4 accent-emerald-300"
-                  />
-                  <span className="flex-1 text-sm text-slate-200">
-                    <span className="mr-1.5">{r.emoji}</span>
-                    {r.name}
-                  </span>
-                  <span className="text-[10px] uppercase tracking-wider text-slate-500">
-                    {r.prep_time_min} min · {r.ingredients.length} items
-                  </span>
-                </label>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-1">
-              <button
-                type="submit"
-                className="rounded-2xl bg-amber-300 px-5 py-3 text-sm font-bold uppercase tracking-[0.12em] text-slate-950 transition hover:bg-amber-200"
-              >
-                Add ticked recipes →
-              </button>
-            </div>
-          </form>
+          <StarterRecipePicker action={seedRecipes} />
           <form action={seedRecipes} className="mt-3 text-left">
             <button
               type="submit"
