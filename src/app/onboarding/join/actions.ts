@@ -1,17 +1,14 @@
 "use server";
 
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-
-const ONE_YEAR = 60 * 60 * 24 * 365;
+import { setIdentityCookies } from "@/lib/hyetas/identity";
 
 export async function joinWithCode(formData: FormData) {
   const code = String(formData.get("code") ?? "")
     .trim()
     .toUpperCase();
   const memberName = String(formData.get("member_name") ?? "").trim();
-  const role = String(formData.get("role") ?? "kid");
   const avatarEmoji = String(formData.get("avatar_emoji") ?? "🦊");
 
   if (!code || code.length !== 6)
@@ -19,10 +16,12 @@ export async function joinWithCode(formData: FormData) {
   if (!memberName) redirect("/onboarding/join?error=Tell+me+your+name");
 
   const supabase = await createClient();
+  // p_role is null on purpose: the INVITE decides the role now, not the
+  // person typing. (Stops a kid joining as a parent.)
   const { data, error } = await supabase.rpc("redeem_invite_code", {
     p_code: code,
     p_member_name: memberName,
-    p_role: role,
+    p_role: null,
     p_avatar_emoji: avatarEmoji,
   });
 
@@ -39,18 +38,21 @@ export async function joinWithCode(formData: FormData) {
 
   const row = Array.isArray(data) ? data[0] : data;
   const memberId = row?.member_id as string | undefined;
-  if (!memberId) redirect("/onboarding/join?error=Something+went+wrong");
+  const householdId = row?.household_id as string | undefined;
+  if (!memberId || !householdId)
+    redirect("/onboarding/join?error=Something+went+wrong");
 
-  const c = await cookies();
-  c.set("hyetas_member_id", memberId!, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: true,
-    maxAge: ONE_YEAR,
-    path: "/",
-  });
+  // Sign them in AND link this device to the household.
+  await setIdentityCookies(memberId!, householdId!);
 
-  // Kid/teen go through the playful profile quiz. Parents skip to home.
+  // The invite decided their role — kids/teens get the playful quiz.
+  const { data: m } = await supabase
+    .from("members")
+    .select("role")
+    .eq("id", memberId!)
+    .maybeSingle();
+  const role = (m?.role as string | undefined) ?? "other";
+
   if (role === "kid" || role === "teen") {
     redirect("/onboarding/profile");
   }

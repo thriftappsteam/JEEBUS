@@ -4,10 +4,9 @@
 
 import Link from "next/link";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { markDone } from "@/app/actions/done";
-import { pickMember } from "@/app/actions/whoami";
+import { enterAs } from "@/app/actions/whoami";
 import {
   requestChoreClaim,
   approveChoreClaim,
@@ -19,7 +18,7 @@ import { Wordmark } from "@/components/brand/Wordmark";
 import { Avatar } from "@/components/brand/Avatar";
 import { Header } from "@/components/brand/Header";
 import { memberStyle } from "@/lib/brand/memberStyle";
-import { anyHouseholdExists } from "@/lib/hyetas/whoami";
+import { Welcome } from "@/components/landing/Welcome";
 
 export const dynamic = "force-dynamic";
 
@@ -44,11 +43,14 @@ type TodayRow = {
   is_for_me: boolean;
 };
 
-const PICKER_ORDER: Record<string, number> = {
-  Lisa: 0,
-  Andrew: 1,
-  Alex: 2,
-  Hannah: 3,
+type PickerMember = Member & { pin_hash: string | null };
+
+const ROLE_ORDER: Record<string, number> = {
+  parent: 0,
+  partner: 1,
+  teen: 2,
+  kid: 3,
+  other: 4,
 };
 
 export default async function Home({
@@ -62,6 +64,7 @@ export default async function Home({
     claim_declined?: string;
     claim_resubmitted?: string;
     welcome?: string;
+    pin_for?: string;
   }>;
 }) {
   const {
@@ -72,85 +75,148 @@ export default async function Home({
     claim_declined,
     claim_resubmitted,
     welcome,
+    pin_for,
   } = await searchParams;
   const supabase = await createClient();
   const cookieStore = await cookies();
   const memberId = cookieStore.get("hyetas_member_id")?.value ?? null;
+  const deviceHouseholdId =
+    cookieStore.get("hyetas_household_id")?.value ?? null;
 
-  // If there are NO households at all, the very first user lands here ->
-  // ship them to onboarding.
-  if (!memberId) {
-    const exists = await anyHouseholdExists();
-    if (!exists) redirect("/onboarding");
-  }
-
-  // If we have a cookie, scope the picker to THAT member's household.
-  let householdScopeId: string | null = null;
+  // Who is signed in on this device (if anyone)?
+  let me: Member | null = null;
   if (memberId) {
-    const { data: m } = await supabase
+    const { data: meRow } = await supabase
       .from("members")
-      .select("household_id")
+      .select("id, name, role, household_id, avatar_emoji")
       .eq("id", memberId)
       .maybeSingle();
-    householdScopeId = (m?.household_id as string | null) ?? null;
+    me = (meRow as Member | null) ?? null;
   }
 
-  const membersQuery = supabase
-    .from("members")
-    .select("id, name, role, household_id, avatar_emoji");
-  const { data: members } = householdScopeId
-    ? await membersQuery.eq("household_id", householdScopeId)
-    : await membersQuery;
+  // Which household may this device show? The signed-in member's, else the
+  // device-link cookie's. NEVER "all households" — a stranger's device has
+  // neither cookie and gets the public welcome page instead of family data.
+  const pickerHouseholdId = me?.household_id ?? deviceHouseholdId;
 
-  const family: Member[] = (members ?? [])
-    .slice()
-    .sort((a: Member, b: Member) => {
-      const ai = PICKER_ORDER[a.name] ?? 99;
-      const bi = PICKER_ORDER[b.name] ?? 99;
-      return ai - bi;
-    });
+  /* ---------- Unknown device: public welcome, zero family data ---------- */
+  if (!me && !pickerHouseholdId) {
+    return <Welcome />;
+  }
 
-  const me = memberId ? family.find((m) => m.id === memberId) : null;
-
-  /* -------------- Picker (no cookie / unknown member) -------------- */
+  /* ---------- Picker (device is linked, nobody signed in) ---------- */
   if (!me) {
+    const { data: hh } = await supabase
+      .from("households")
+      .select("id, name, emoji")
+      .eq("id", pickerHouseholdId!)
+      .maybeSingle();
+    const household =
+      (hh as { id: string; name: string; emoji: string | null } | null) ??
+      null;
+    if (!household) return <Welcome />; // stale device link
+
+    const { data: members } = await supabase
+      .from("members")
+      .select("id, name, role, household_id, avatar_emoji, pin_hash")
+      .eq("household_id", household.id);
+
+    const family: PickerMember[] = ((members as PickerMember[] | null) ?? [])
+      .slice()
+      .sort(
+        (a, b) =>
+          (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) ||
+          a.name.localeCompare(b.name),
+      );
+
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col px-6 pt-10 pb-12">
         <div className="flex flex-col items-center text-center">
           <Mascot size={120} />
           <Wordmark size="xl" className="mt-2" />
           <p className="mt-1 text-base text-slate-300">
-            Have you ever seen a man throw a shoe.
+            {household.emoji ?? "🏡"} {household.name}
           </p>
           <p className="mt-6 text-[11px] uppercase tracking-[0.18em] text-slate-500">
             Who&apos;s on this device?
           </p>
         </div>
 
+        {error ? (
+          <p
+            role="alert"
+            className="mt-4 rounded-xl border border-rose-700/40 bg-rose-900/30 px-4 py-3 text-center text-sm text-rose-300"
+          >
+            {error}
+          </p>
+        ) : null}
+
         <section className="mt-6 grid grid-cols-2 gap-3">
-          {family.map((m) => (
-            <form key={m.id} action={pickMember}>
-              <input type="hidden" name="member_id" value={m.id} />
-              <button
-                type="submit"
-                className="flex w-full flex-col items-center gap-3 rounded-3xl border border-white/10 bg-white/[0.04] px-4 py-6 transition hover:bg-white/[0.08]"
+          {family.map((m) =>
+            m.pin_hash ? (
+              <details
+                key={m.id}
+                open={pin_for === m.id}
+                className="rounded-3xl border border-white/10 bg-white/[0.04]"
               >
-                <Avatar name={m.name} emoji={m.avatar_emoji} size={72} />
-                <span className="text-2xl font-display font-bold text-slate-100">
-                  {m.name}
-                </span>
-                <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
-                  {m.role}
-                </span>
-              </button>
-            </form>
-          ))}
+                <summary className="flex cursor-pointer list-none flex-col items-center gap-3 px-4 py-6 transition hover:bg-white/[0.04] [&::-webkit-details-marker]:hidden">
+                  <Avatar name={m.name} emoji={m.avatar_emoji} size={72} />
+                  <span className="font-display text-2xl font-bold text-slate-100">
+                    {m.name}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                    🔒 {m.role}
+                  </span>
+                </summary>
+                <form action={enterAs} className="flex items-center gap-2 px-4 pb-4">
+                  <input type="hidden" name="member_id" value={m.id} />
+                  <input
+                    name="pin"
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="PIN"
+                    autoComplete="off"
+                    className="w-full min-w-0 rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-center text-lg tracking-[0.3em] text-slate-100 focus:border-amber-300 focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    className="rounded-xl bg-amber-300 px-3 py-2 text-xs font-bold uppercase text-slate-950"
+                  >
+                    Go
+                  </button>
+                </form>
+              </details>
+            ) : (
+              <form key={m.id} action={enterAs}>
+                <input type="hidden" name="member_id" value={m.id} />
+                <button
+                  type="submit"
+                  className="flex w-full flex-col items-center gap-3 rounded-3xl border border-white/10 bg-white/[0.04] px-4 py-6 transition hover:bg-white/[0.08]"
+                >
+                  <Avatar name={m.name} emoji={m.avatar_emoji} size={72} />
+                  <span className="text-2xl font-display font-bold text-slate-100">
+                    {m.name}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                    {m.role}
+                  </span>
+                </button>
+              </form>
+            ),
+          )}
         </section>
 
-        <div className="mt-8 text-center">
+        <div className="mt-8 space-y-2 text-center">
+          <Link
+            href="/signin"
+            className="block text-[11px] uppercase tracking-wider text-slate-500 hover:text-slate-300"
+          >
+            Grown-up on a new device? Sign in with email →
+          </Link>
           <Link
             href="/onboarding"
-            className="text-[11px] uppercase tracking-wider text-amber-300/80 hover:text-amber-300"
+            className="block text-[11px] uppercase tracking-wider text-amber-300/80 hover:text-amber-300"
           >
             Not your family? Start fresh or join with a code →
           </Link>
@@ -299,14 +365,22 @@ export default async function Home({
       <Header
         subtitle={`Hi, ${me.name}. The system is asking — not you.`}
         rightSlot={
-          <form action="/auth/signout" method="post">
-            <button
-              type="submit"
+          <div className="flex items-center gap-3">
+            <Link
+              href="/account"
               className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-300"
             >
-              Switch user
-            </button>
-          </form>
+              You &amp; family
+            </Link>
+            <form action="/auth/signout" method="post">
+              <button
+                type="submit"
+                className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-300"
+              >
+                Switch user
+              </button>
+            </form>
+          </div>
         }
       />
 
