@@ -88,5 +88,8 @@ export async function startNewFamily(formData: FormData) {
     // ignore — recovery can be set up later
   }
 
-  redirect("/onboarding/invite?fresh=1");
+  // Into the creator wizard: personalize first, then build the family.
+  redirect("/onboarding/setup");
 }
+
+// (touched to sync the build sandbox — harmless, delete any time)

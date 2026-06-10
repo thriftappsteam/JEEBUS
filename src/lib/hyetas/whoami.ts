@@ -30,6 +30,7 @@ export type CurrentHousehold = {
   currency_symbol: string;
   currency_label: string;
   onboarded_at: string | null;
+  features: Record<string, boolean> | null;
 };
 
 /** Read the cookie. Pure string, no DB hit. */
@@ -67,7 +68,7 @@ export async function getCurrentMemberAndHousehold(): Promise<{
   const { data } = await supabase
     .from("households")
     .select(
-      "id, name, emoji, timezone, currency_symbol, currency_label, onboarded_at",
+      "id, name, emoji, timezone, currency_symbol, currency_label, onboarded_at, features",
     )
     .eq("id", member.household_id)
     .maybeSingle();
@@ -103,7 +104,7 @@ export async function getDeviceHousehold(): Promise<CurrentHousehold | null> {
   const { data } = await supabase
     .from("households")
     .select(
-      "id, name, emoji, timezone, currency_symbol, currency_label, onboarded_at",
+      "id, name, emoji, timezone, currency_symbol, currency_label, onboarded_at, features",
     )
     .eq("id", householdId)
     .maybeSingle();

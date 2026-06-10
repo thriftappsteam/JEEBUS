@@ -151,3 +151,31 @@ export async function setMemberEmail(formData: FormData) {
     )}`,
   );
 }
+
+/** Update which features the household uses (drives the nav). Grown-ups only. */
+export async function setHouseholdFeatures(formData: FormData) {
+  const { member, household } = await requireCtx();
+  if (!isGrownUp(member.role))
+    redirect("/account?error=Only+grown-ups+can+change+features");
+
+  const picked = new Set(formData.getAll("features").map((v) => String(v)));
+  if (picked.size === 0)
+    redirect("/account?error=Keep+at+least+one+feature+on");
+
+  const supabase = await createClient();
+  await supabase
+    .from("households")
+    .update({
+      features: {
+        chores: picked.has("chores"),
+        meals: picked.has("meals"),
+        grocery: picked.has("grocery"),
+        money: picked.has("money"),
+        shifts: picked.has("shifts"),
+      },
+    })
+    .eq("id", household.id);
+
+  revalidatePath("/", "layout");
+  redirect("/account?saved=Features+updated");
+}

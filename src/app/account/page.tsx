@@ -6,7 +6,21 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentMemberAndHousehold } from "@/lib/hyetas/whoami";
 import { Header } from "@/components/brand/Header";
 import { Avatar } from "@/components/brand/Avatar";
-import { setMemberPin, clearMemberPin, setMemberEmail } from "./actions";
+import { resolveFeatures, type FeatureKey } from "@/lib/hyetas/features";
+import {
+  setMemberPin,
+  clearMemberPin,
+  setMemberEmail,
+  setHouseholdFeatures,
+} from "./actions";
+
+const FEATURE_LABELS: { key: FeatureKey; label: string }[] = [
+  { key: "chores", label: "🧹 Chores & Tonight" },
+  { key: "meals", label: "🍝 Meals & recipes" },
+  { key: "grocery", label: "🛒 Grocery list" },
+  { key: "money", label: "💰 Kid money" },
+  { key: "shifts", label: "🌙 Shift roster" },
+];
 
 export const dynamic = "force-dynamic";
 
@@ -185,11 +199,60 @@ export default async function AccountPage({
         })}
       </section>
 
+      {grownUp ? (
+        <section className="mt-8 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+            Features
+          </p>
+          <p className="mt-2 text-xs text-slate-400">
+            Tick what your family uses — only those show in the bottom bar.
+            Nothing is deleted when you switch one off.
+          </p>
+          <form action={setHouseholdFeatures} className="mt-3 space-y-2">
+            {FEATURE_LABELS.map((f) => {
+              const current = resolveFeatures(household.features);
+              return (
+                <label
+                  key={f.key}
+                  className="flex cursor-pointer items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.02] px-3 py-2.5 text-sm text-slate-200 transition has-[:checked]:border-amber-300/60 has-[:checked]:bg-amber-300/10"
+                >
+                  <input
+                    type="checkbox"
+                    name="features"
+                    value={f.key}
+                    defaultChecked={current[f.key]}
+                    className="h-4 w-4 accent-amber-300"
+                  />
+                  {f.label}
+                </label>
+              );
+            })}
+            <button
+              type="submit"
+              className="mt-1 w-full rounded-2xl border border-amber-300/50 bg-amber-300/10 px-4 py-2.5 text-xs font-bold uppercase tracking-[0.12em] text-amber-200 transition hover:bg-amber-300/20"
+            >
+              Save features
+            </button>
+          </form>
+        </section>
+      ) : null}
+
       <p className="mt-8 text-center text-xs leading-relaxed text-slate-500">
         PINs lock the picker on shared devices. Recovery email is for
         grown-ups — it&apos;s how you get back in from a brand-new phone
         (magic link, no passwords).
       </p>
+
+      <p className="mt-4 text-center text-xs text-slate-600">
+        <a
+          href="/privacy"
+          className="underline decoration-slate-700 underline-offset-2 hover:text-slate-400"
+        >
+          How we look after your family&apos;s data →
+        </a>
+      </p>
     </main>
   );
 }
+
+// (touched to sync the build sandbox — harmless, delete any time)

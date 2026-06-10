@@ -34,3 +34,5 @@ export async function POST(request: NextRequest) {
   c.delete("hyetas_member_id");
   return NextResponse.redirect(new URL("/", request.url), { status: 303 });
 }
+
+// (touched to sync the build sandbox — harmless, delete any time)

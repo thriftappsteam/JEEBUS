@@ -45,16 +45,7 @@ export async function joinWithCode(formData: FormData) {
   // Sign them in AND link this device to the household.
   await setIdentityCookies(memberId!, householdId!);
 
-  // The invite decided their role — kids/teens get the playful quiz.
-  const { data: m } = await supabase
-    .from("members")
-    .select("role")
-    .eq("id", memberId!)
-    .maybeSingle();
-  const role = (m?.role as string | undefined) ?? "other";
-
-  if (role === "kid" || role === "teen") {
-    redirect("/onboarding/profile");
-  }
-  redirect("/?welcome=1");
+  // Everyone gets the short joiner wizard — it adapts to role + features
+  // (kids pick a mascot, grown-ups get one open question, all skippable).
+  redirect("/onboarding/profile");
 }

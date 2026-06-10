@@ -2,10 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { Features } from "@/lib/hyetas/features";
 
 type Tab = {
   href: string;
   label: string;
+  /** Which household feature flag controls this tab. Undefined = always shown. */
+  feature?: keyof Features;
   icon: (active: boolean) => React.ReactNode;
 };
 
@@ -31,6 +34,7 @@ const TABS: Tab[] = [
   {
     href: "/chores",
     label: "Chores",
+    feature: "chores",
     icon: (active) => (
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden>
         <path
@@ -52,6 +56,7 @@ const TABS: Tab[] = [
   {
     href: "/meals",
     label: "Meals",
+    feature: "meals",
     icon: (active) => (
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden>
         <path
@@ -67,6 +72,7 @@ const TABS: Tab[] = [
   {
     href: "/grocery",
     label: "Grocery",
+    feature: "grocery",
     icon: (active) => (
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden>
         <path
@@ -85,6 +91,7 @@ const TABS: Tab[] = [
   {
     href: "/money",
     label: "Money",
+    feature: "money",
     icon: (active) => (
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden>
         <rect
@@ -117,6 +124,7 @@ const TABS: Tab[] = [
   {
     href: "/recipes",
     label: "Recipes",
+    feature: "meals",
     icon: (active) => (
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden>
         <path
@@ -137,15 +145,32 @@ const TABS: Tab[] = [
   },
 ];
 
-export function BottomNav() {
+const GRID_COLS: Record<number, string> = {
+  1: "grid-cols-1",
+  2: "grid-cols-2",
+  3: "grid-cols-3",
+  4: "grid-cols-4",
+  5: "grid-cols-5",
+  6: "grid-cols-6",
+};
+
+export function BottomNav({ features }: { features: Features }) {
   const pathname = usePathname();
+
+  // Onboarding (incl. the wizard) is a focused flow — no nav.
+  if (pathname.startsWith("/onboarding")) return null;
+
+  const tabs = TABS.filter((t) => !t.feature || features[t.feature]);
+
   return (
     <nav
       className="fixed inset-x-0 bottom-0 z-30 border-t border-amber-300/10 bg-[#0b1220] pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_32px_-12px_rgba(0,0,0,0.6)]"
       aria-label="Primary"
     >
-      <ul className="mx-auto grid max-w-md grid-cols-6 gap-0.5 px-1 pt-2 pb-2">
-        {TABS.map((t) => {
+      <ul
+        className={`mx-auto grid max-w-md ${GRID_COLS[tabs.length] ?? "grid-cols-6"} gap-0.5 px-1 pt-2 pb-2`}
+      >
+        {tabs.map((t) => {
           const active =
             t.href === "/"
               ? pathname === "/"

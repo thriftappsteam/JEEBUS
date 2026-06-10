@@ -19,6 +19,7 @@ import { Avatar } from "@/components/brand/Avatar";
 import { Header } from "@/components/brand/Header";
 import { memberStyle } from "@/lib/brand/memberStyle";
 import { Welcome } from "@/components/landing/Welcome";
+import { resolveFeatures } from "@/lib/hyetas/features";
 
 export const dynamic = "force-dynamic";
 
@@ -230,77 +231,96 @@ export default async function Home({
   }
 
   /* -------------- Tonight view for the picked member -------------- */
-  // Make sure today's chores have been generated from the rotation. Idempotent.
-  await supabase.rpc("generate_assignments_for_today");
+  // Which features has this household switched on? (null = everything)
+  const { data: hhFeatRow } = await supabase
+    .from("households")
+    .select("features")
+    .eq("id", me.household_id)
+    .maybeSingle();
+  const features = resolveFeatures(hhFeatRow?.features ?? null);
 
-  const { data: rows } = await supabase.rpc("todays_assignments", {
-    p_member_id: me.id,
-  });
-  const today = (rows as TodayRow[] | null) ?? [];
+  // Make sure today's chores have been generated from the rotation. Idempotent.
+  let today: TodayRow[] = [];
+  if (features.chores) {
+    await supabase.rpc("generate_assignments_for_today");
+    const { data: rows } = await supabase.rpc("todays_assignments", {
+      p_member_id: me.id,
+    });
+    today = (rows as TodayRow[] | null) ?? [];
+  }
 
   // Anyone on a shift starting today (Melbourne)?
-  const { data: shiftRows } = await supabase
-    .from("v_todays_shifts")
-    .select(
-      "shift_id, member_id, member_name, shift_type, starts_at, ends_at, is_last_in_block",
-    )
-    .order("starts_at");
-  const todaysShifts =
-    (shiftRows as
-      | {
-          shift_id: string;
-          member_id: string;
-          member_name: string;
-          shift_type: string;
-          starts_at: string;
-          ends_at: string;
-          is_last_in_block: boolean;
-        }[]
-      | null) ?? [];
+  type ShiftToday = {
+    shift_id: string;
+    member_id: string;
+    member_name: string;
+    shift_type: string;
+    starts_at: string;
+    ends_at: string;
+    is_last_in_block: boolean;
+  };
+  let todaysShifts: ShiftToday[] = [];
+  let nextShift: { starts_at: string } | null = null;
+  let hasAnyShifts = false;
+  if (features.shifts) {
+    const { data: shiftRows } = await supabase
+      .from("v_todays_shifts")
+      .select(
+        "shift_id, member_id, member_name, shift_type, starts_at, ends_at, is_last_in_block",
+      )
+      .order("starts_at");
+    todaysShifts = (shiftRows as ShiftToday[] | null) ?? [];
 
-  // Next shift for the picked member (within the upcoming 14 days)
-  const inFourteenDays = new Date();
-  inFourteenDays.setDate(inFourteenDays.getDate() + 14);
-  const { data: upcomingShifts } = await supabase
-    .from("shifts")
-    .select("starts_at")
-    .eq("member_id", me.id)
-    .gt("starts_at", new Date().toISOString())
-    .lte("starts_at", inFourteenDays.toISOString())
-    .order("starts_at")
-    .limit(1);
-  const nextShift = upcomingShifts?.[0] ?? null;
-
-  // Does this member have any shifts at all? Controls whether we show a
-  // small "My roster" entry-point link on Tonight.
-  const { count: shiftCount } = await supabase
-    .from("shifts")
-    .select("id", { count: "exact", head: true })
-    .eq("member_id", me.id);
-  const hasAnyShifts = (shiftCount ?? 0) > 0;
-
-  // Unseen new badges for celebration toast
-  const { data: unseenBadges } = await supabase
-    .from("member_badges")
-    .select(
-      `badge_code, badge:badge_catalog!badge_code(name, emoji)`,
-    )
-    .eq("member_id", me.id)
-    .eq("seen_by_member", false)
-    .order("earned_at", { ascending: false })
-    .limit(3);
-  const newBadges =
-    (unseenBadges as unknown as {
-      badge_code: string;
-      badge: { name: string; emoji: string } | null;
-    }[] | null) ?? [];
-  if (newBadges.length > 0) {
-    // Mark seen so they don't pop again on refresh
-    await supabase
-      .from("member_badges")
-      .update({ seen_by_member: true })
+    // Next shift for the picked member (within the upcoming 14 days)
+    const inFourteenDays = new Date();
+    inFourteenDays.setDate(inFourteenDays.getDate() + 14);
+    const { data: upcomingShifts } = await supabase
+      .from("shifts")
+      .select("starts_at")
       .eq("member_id", me.id)
-      .eq("seen_by_member", false);
+      .gt("starts_at", new Date().toISOString())
+      .lte("starts_at", inFourteenDays.toISOString())
+      .order("starts_at")
+      .limit(1);
+    nextShift = upcomingShifts?.[0] ?? null;
+
+    // Does this member have any shifts at all? Controls whether we show a
+    // small "My roster" entry-point link on Tonight.
+    const { count: shiftCount } = await supabase
+      .from("shifts")
+      .select("id", { count: "exact", head: true })
+      .eq("member_id", me.id);
+    hasAnyShifts = (shiftCount ?? 0) > 0;
+  }
+
+  // Unseen new badges for celebration toast (badges live under kid money)
+  let newBadges: {
+    badge_code: string;
+    badge: { name: string; emoji: string } | null;
+  }[] = [];
+  if (features.money) {
+    const { data: unseenBadges } = await supabase
+      .from("member_badges")
+      .select(
+        `badge_code, badge:badge_catalog!badge_code(name, emoji)`,
+      )
+      .eq("member_id", me.id)
+      .eq("seen_by_member", false)
+      .order("earned_at", { ascending: false })
+      .limit(3);
+    newBadges =
+      (unseenBadges as unknown as {
+        badge_code: string;
+        badge: { name: string; emoji: string } | null;
+      }[] | null) ?? [];
+    if (newBadges.length > 0) {
+      // Mark seen so they don't pop again on refresh
+      await supabase
+        .from("member_badges")
+        .update({ seen_by_member: true })
+        .eq("member_id", me.id)
+        .eq("seen_by_member", false);
+    }
   }
 
   const myPending = today.filter((r) => r.is_for_me && r.status === "pending");
@@ -590,16 +610,45 @@ export default async function Home({
         </p>
 
         {myPending.length === 0 && myDone.length === 0 ? (
-          <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 text-sm text-slate-400">
-            <span className="mr-2">🛋️</span>Nothing on your plate. Sit on a couch.
-          </div>
+          features.chores ? (
+            <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 text-sm text-slate-400">
+              <span className="mr-2">🛋️</span>Nothing on your plate. Sit on a couch.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {features.meals ? (
+                <Link
+                  href="/meals"
+                  className="block rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-200 transition hover:bg-white/[0.06]"
+                >
+                  🍝 This week&apos;s meals →
+                </Link>
+              ) : null}
+              {features.grocery ? (
+                <Link
+                  href="/grocery"
+                  className="block rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-200 transition hover:bg-white/[0.06]"
+                >
+                  🛒 Grocery list →
+                </Link>
+              ) : null}
+              {features.money ? (
+                <Link
+                  href="/money"
+                  className="block rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-200 transition hover:bg-white/[0.06]"
+                >
+                  💰 Kid money →
+                </Link>
+              ) : null}
+            </div>
+          )
         ) : null}
 
         {myPending.map((row) => {
           const rowAccent = memberStyle(row.member_name).accent;
           const isFamilyChore = row.member_name === "Family";
           const kidCanAskForBounty =
-            isFamilyChore && me.role !== "parent";
+            features.money && isFamilyChore && me.role !== "parent";
           const alreadyAsked = myPendingClaimAssignmentIds.has(
             row.assignment_id,
           );
@@ -729,7 +778,7 @@ export default async function Home({
           {otherToday.map((row) => {
             const rowAccent = memberStyle(row.member_name).accent;
             const canClaim =
-              me.role !== "parent" && row.status === "pending";
+              features.money && me.role !== "parent" && row.status === "pending";
             const alreadyAsked = myPendingClaimAssignmentIds.has(
               row.assignment_id,
             );
@@ -813,3 +862,5 @@ export default async function Home({
     </main>
   );
 }
+
+// (touched to sync the build sandbox — harmless, delete any time)

@@ -103,9 +103,22 @@ export function Welcome() {
         </Link>
       </section>
 
-      <p className="mt-auto pt-12 text-center text-[10px] uppercase tracking-wider text-slate-600">
+      <p className="mt-8 text-center text-xs text-slate-500">
+        It&apos;s your family&apos;s data — names, chores, pocket money.{" "}
+        <Link
+          href="/privacy"
+          className="text-slate-400 underline decoration-slate-600 underline-offset-2 hover:text-slate-200"
+        >
+          Here&apos;s exactly how we look after it
+        </Link>
+        .
+      </p>
+
+      <p className="mt-auto pt-10 text-center text-[10px] uppercase tracking-wider text-slate-600">
         the system asks. you don&apos;t have to.
       </p>
     </main>
   );
 }
+
+// (touched to sync the build sandbox — harmless, delete any time)
