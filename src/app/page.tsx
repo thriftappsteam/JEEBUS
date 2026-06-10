@@ -268,6 +268,7 @@ export default async function Home({
       .select(
         "shift_id, member_id, member_name, shift_type, starts_at, ends_at, is_last_in_block",
       )
+      .eq("household_id", me.household_id)
       .order("starts_at");
     todaysShifts = (shiftRows as ShiftToday[] | null) ?? [];
 

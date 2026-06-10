@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentMember } from "@/lib/hyetas/whoami";
 import { Header } from "@/components/brand/Header";
 import { ChoreForm } from "@/components/chores/ChoreForm";
 
@@ -11,11 +13,14 @@ export default async function NewChorePage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const { error } = await searchParams;
+  const me = await getCurrentMember();
+  if (!me) redirect("/");
   const supabase = await createClient();
 
   const { data: members } = await supabase
     .from("members")
     .select("id, name, role")
+    .eq("household_id", me!.household_id)
     .order("role")
     .order("name");
 

@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentMember } from "@/lib/hyetas/whoami";
 import { Header } from "@/components/brand/Header";
 import { ChoreForm, type ChoreFormValues } from "@/components/chores/ChoreForm";
 
@@ -15,6 +16,8 @@ export default async function EditChorePage({
 }) {
   const { id } = await params;
   const { error } = await searchParams;
+  const me = await getCurrentMember();
+  if (!me) redirect("/");
   const supabase = await createClient();
 
   const [{ data: chore }, { data: members }] = await Promise.all([
@@ -24,10 +27,12 @@ export default async function EditChorePage({
         "id, name, cadence, day_hint, default_assignee, pays_aud, paid_by_member_id, notes, is_active, due_time",
       )
       .eq("id", id)
+      .eq("household_id", me!.household_id)
       .maybeSingle(),
     supabase
       .from("members")
       .select("id, name, role")
+      .eq("household_id", me!.household_id)
       .order("role")
       .order("name"),
   ]);

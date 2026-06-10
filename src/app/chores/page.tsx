@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { Header } from "@/components/brand/Header";
 import { Avatar } from "@/components/brand/Avatar";
@@ -85,14 +86,18 @@ export default async function ChoresPage({
   const memberId = cookieStore.get("hyetas_member_id")?.value ?? null;
 
   let memberName: string | null = null;
+  let householdId: string | null = null;
   if (memberId) {
     const { data: m } = await supabase
       .from("members")
-      .select("name")
+      .select("name, household_id")
       .eq("id", memberId)
       .maybeSingle();
     memberName = m?.name ?? null;
+    householdId = (m?.household_id as string | undefined) ?? null;
   }
+  // No signed-in member → not your chore list. Bounce to the front door.
+  if (!householdId) redirect("/");
 
   const { data: rows } = await supabase
     .from("chores")
@@ -100,6 +105,7 @@ export default async function ChoresPage({
       `id, name, cadence, day_hint, notes, pays_aud, default_assignee, due_time,
        member:members!default_assignee(id, name)`,
     )
+    .eq("household_id", householdId!)
     .eq("is_active", true)
     .order("name");
 

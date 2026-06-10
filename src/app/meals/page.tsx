@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ruleWarning, mealsWeekMonday } from "@/lib/utils/rules";
 import { Header } from "@/components/brand/Header";
@@ -62,14 +63,18 @@ export default async function MealsPage() {
   const memberId = cookieStore.get("hyetas_member_id")?.value ?? null;
 
   let memberName: string | null = null;
+  let householdId: string | null = null;
   if (memberId) {
     const { data: m } = await supabase
       .from("members")
-      .select("name")
+      .select("name, household_id")
       .eq("id", memberId)
       .maybeSingle();
     memberName = m?.name ?? null;
+    householdId = (m?.household_id as string | undefined) ?? null;
   }
+  // No signed-in member → no meal plan to show. Bounce to the front door.
+  if (!householdId) redirect("/");
 
   // Build the three-week window.
   // mealsWeekMonday (not planningWeekMonday) — Sunday counts as the end
@@ -96,6 +101,7 @@ export default async function MealsPage() {
        lunch:recipes!lunch_recipe_id(id, name, cuisine, contains, is_kid_favourite),
        dinner:recipes!dinner_recipe_id(id, name, cuisine, contains, is_kid_favourite)`,
     )
+    .eq("household_id", householdId!)
     .gte("day_date", rangeStart)
     .lte("day_date", rangeEnd)
     .order("day_date");

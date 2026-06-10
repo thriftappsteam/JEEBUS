@@ -78,7 +78,7 @@ export default async function RootLayout({
         {memberId && memberName ? (
           <EnableNotifications memberId={memberId} memberName={memberName} />
         ) : null}
-        {memberId ? <InstallPrompt /> : null}
+        {memberId && memberName ? <InstallPrompt /> : null}
         <div className="pb-24">{children}</div>
         <BottomNav features={features} />
       </body>

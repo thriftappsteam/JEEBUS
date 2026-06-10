@@ -10,15 +10,9 @@ const CONTAINS_TAGS = ["peanut", "avocado", "oats", "banana_cooked"] as const;
 async function getHouseholdId(): Promise<string | null> {
   const { getCurrentMember } = await import("@/lib/hyetas/whoami");
   const me = await getCurrentMember();
-  if (me) return me.household_id;
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("households")
-    .select("id")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  return data?.id ?? null;
+  // No signed-in member → no household. (Never guess: with multiple
+  // families on one DB, "first household" would be someone else's.)
+  return me?.household_id ?? null;
 }
 
 function readForm(formData: FormData) {

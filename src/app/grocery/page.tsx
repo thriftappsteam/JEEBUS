@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentMember } from "@/lib/hyetas/whoami";
 import { rebuildGrocery } from "@/app/actions/grocery";
 import {
   planningWeekMonday,
@@ -81,12 +83,15 @@ export default async function GroceryPage({
   const nextMonday = nextPlanningWeekMonday();
   const monday = slot === "next" ? nextMonday : thisMonday;
 
+  const me = await getCurrentMember();
+  if (!me) redirect("/");
   const supabase = await createClient();
   const { data: rows } = await supabase
     .from("grocery_items")
     .select(
       "id, item, quantity, aisle, for_recipes, notes, coles_price, woolies_price, best_price, cheaper_at, got_it, is_standing, is_manual",
     )
+    .eq("household_id", me!.household_id)
     .eq("week_of", monday)
     .order("aisle")
     .order("item");
