@@ -138,8 +138,8 @@ export default async function SetupWizardPage({
       {step === "situation" ? (
         <>
           <p className="mt-6 text-sm text-slate-300">
-            Two questions, {member.name} — so the app fits your house, not
-            ours.
+            A few quick questions, {member.name} — so the app fits your
+            house, not ours.
           </p>
           <form action={saveSituation} className="mt-6 space-y-7">
             <fieldset>
@@ -179,6 +179,25 @@ export default async function SetupWizardPage({
                 placeholder="e.g. I want the kids to do their jobs without me chasing them every night…"
                 className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 focus:border-amber-300 focus:outline-none"
               />
+            </fieldset>
+
+            <fieldset>
+              <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-400">
+                Any allergies or food needs in the house? (optional)
+              </label>
+              <textarea
+                name="allergies"
+                rows={3}
+                maxLength={500}
+                placeholder="e.g. Sam — peanuts (serious). Mia — vegetarian. No shellfish for anyone."
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 focus:border-amber-300 focus:outline-none"
+              />
+              <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                This is health info, so the deal is: totally optional, used
+                only to flag meals and groceries for your own family, and a
+                grown-up can change or wipe it any time in You &amp; family.
+                We flag — you still check labels.
+              </p>
             </fieldset>
 
             <div className="flex items-center justify-between gap-3 pt-1">

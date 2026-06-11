@@ -15,10 +15,27 @@ const SECTIONS: { q: string; a: React.ReactNode }[] = [
       <>
         Only what you type in: first names (or nicknames — that&apos;s
         fine), the avatars you pick, chores, recipes, meal plans, grocery
-        items, and any pocket-money amounts you enter. Grown-ups can add an
+        items, any pocket-money amounts you enter, and — only if you choose
+        to add them — food allergy or dietary notes. Grown-ups can add an
         email address — that&apos;s optional, and it&apos;s only used to
         sign you back in on a new phone. Kids never need an email or phone
         number.
+      </>
+    ),
+  },
+  {
+    q: "What about allergies & food needs?",
+    a: (
+      <>
+        Allergy and dietary notes are health information, so we hold them to
+        a stricter standard: they&apos;re always optional, free-text, and
+        used for exactly one thing — flagging meals and groceries for your
+        own family. They&apos;re never shared, sold, or used for anything
+        else. A grown-up can edit or completely wipe the note any time in
+        You &amp; family (or email us and we&apos;ll do it). One honest
+        caveat: HYETAS is a family organiser, not a medical service — it
+        helps you remember, but always double-check ingredients and labels
+        yourself.
       </>
     ),
   },

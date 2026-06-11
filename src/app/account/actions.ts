@@ -152,6 +152,48 @@ export async function setMemberEmail(formData: FormData) {
   );
 }
 
+/**
+ * Update (or wipe — empty box) the household's food & allergy notes.
+ * Health info: optional, single-purpose, grown-ups only. Merges over the
+ * other setup_answers keys so wizard answers survive.
+ */
+export async function setHouseholdAllergies(formData: FormData) {
+  const { member, household } = await requireCtx();
+  if (!isGrownUp(member.role))
+    redirect("/account?error=Only+grown-ups+can+change+food+%26+allergy+notes");
+
+  const allergies = String(formData.get("allergies") ?? "")
+    .trim()
+    .slice(0, 500);
+
+  const supabase = await createClient();
+  const { data: hh } = await supabase
+    .from("households")
+    .select("setup_answers")
+    .eq("id", household.id)
+    .maybeSingle();
+  const prev =
+    ((hh as { setup_answers: Record<string, unknown> | null } | null)
+      ?.setup_answers as Record<string, unknown> | null) ?? {};
+  await supabase
+    .from("households")
+    .update({
+      setup_answers: {
+        ...prev,
+        allergies: allergies || null,
+        allergies_updated_at: new Date().toISOString(),
+      },
+    })
+    .eq("id", household.id);
+
+  revalidatePath("/account");
+  redirect(
+    `/account?saved=${encodeURIComponent(
+      allergies ? "Food & allergy notes saved" : "Food & allergy notes wiped",
+    )}`,
+  );
+}
+
 /** Update which features the household uses (drives the nav). Grown-ups only. */
 export async function setHouseholdFeatures(formData: FormData) {
   const { member, household } = await requireCtx();

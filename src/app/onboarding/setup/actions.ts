@@ -47,6 +47,12 @@ export async function saveSituation(formData: FormData) {
   const { household } = await requireParentContext();
   const pains = formData.getAll("pains").map((v) => String(v));
   const wish = String(formData.get("wish") ?? "").trim();
+  // Allergies/dietary needs are health info ("sensitive information" under
+  // the AU Privacy Act): optional, single-purpose (flagging meals/grocery),
+  // editable + wipeable in /account, named in /privacy.
+  const allergies = String(formData.get("allergies") ?? "")
+    .trim()
+    .slice(0, 500);
 
   const supabase = await createClient();
   // Merge over whatever's there (wizard is re-runnable without data loss).
@@ -63,6 +69,7 @@ export async function saveSituation(formData: FormData) {
         ...prev,
         pains,
         wish: wish || null,
+        allergies: allergies || null,
         situation_answered_at: new Date().toISOString(),
       },
     })

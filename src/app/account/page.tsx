@@ -12,6 +12,7 @@ import {
   clearMemberPin,
   setMemberEmail,
   setHouseholdFeatures,
+  setHouseholdAllergies,
 } from "./actions";
 
 const FEATURE_LABELS: { key: FeatureKey; label: string }[] = [
@@ -56,6 +57,18 @@ export default async function AccountPage({
     .eq("household_id", household.id)
     .order("created_at", { ascending: true });
   const family: MemberRow[] = (data as MemberRow[] | null) ?? [];
+
+  // Household food & allergy notes (health info — grown-ups view/edit/wipe).
+  const { data: hh } = await supabase
+    .from("households")
+    .select("setup_answers")
+    .eq("id", household.id)
+    .maybeSingle();
+  const setupAnswers =
+    ((hh as { setup_answers: Record<string, unknown> | null } | null)
+      ?.setup_answers as Record<string, unknown> | null) ?? {};
+  const allergyNotes =
+    typeof setupAnswers.allergies === "string" ? setupAnswers.allergies : "";
 
   // Kids manage only themselves; grown-ups manage everyone.
   const manageable = grownUp ? family : family.filter((m) => m.id === me.id);
@@ -232,6 +245,35 @@ export default async function AccountPage({
               className="mt-1 w-full rounded-2xl border border-amber-300/50 bg-amber-300/10 px-4 py-2.5 text-xs font-bold uppercase tracking-[0.12em] text-amber-200 transition hover:bg-amber-300/20"
             >
               Save features
+            </button>
+          </form>
+        </section>
+      ) : null}
+
+      {grownUp ? (
+        <section className="mt-6 rounded-3xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+            Food &amp; allergy notes
+          </p>
+          <p className="mt-2 text-xs leading-relaxed text-slate-400">
+            One note for the whole house, used only to flag meals and
+            groceries. It&apos;s optional health info — clear the box and
+            save to wipe it completely. We flag — you still check labels.
+          </p>
+          <form action={setHouseholdAllergies} className="mt-3 space-y-2">
+            <textarea
+              name="allergies"
+              rows={3}
+              maxLength={500}
+              defaultValue={allergyNotes}
+              placeholder="e.g. Sam — peanuts (serious). Mia — vegetarian. No shellfish for anyone."
+              className="w-full rounded-2xl border border-white/10 bg-slate-900 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 focus:border-amber-300 focus:outline-none"
+            />
+            <button
+              type="submit"
+              className="w-full rounded-2xl border border-amber-300/50 bg-amber-300/10 px-4 py-2.5 text-xs font-bold uppercase tracking-[0.12em] text-amber-200 transition hover:bg-amber-300/20"
+            >
+              Save notes
             </button>
           </form>
         </section>
