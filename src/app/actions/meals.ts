@@ -74,16 +74,9 @@ export async function autoFillMeals(formData: FormData) {
 
   const { getCurrentMember } = await import("@/lib/hyetas/whoami");
   const me = await getCurrentMember();
-  let householdId = me?.household_id ?? null;
-  if (!householdId) {
-    const { data: hh } = await supabase
-      .from("households")
-      .select("id")
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    householdId = hh?.id ?? null;
-  }
+  // No signed-in member → no household. (Never guess: with multiple
+  // families on one DB, "first household" would be someone else's.)
+  const householdId = me?.household_id ?? null;
   if (!householdId) return;
 
   // 7 days starting at the given Monday.
@@ -97,6 +90,7 @@ export async function autoFillMeals(formData: FormData) {
     .select(
       "id, day_date, breakfast_recipe_id, lunch_recipe_id, dinner_recipe_id",
     )
+    .eq("household_id", householdId)
     .gte("day_date", weekMonday)
     .lte("day_date", sunday);
 
@@ -108,6 +102,7 @@ export async function autoFillMeals(formData: FormData) {
   const { data: recipes } = await supabase
     .from("recipes")
     .select("id, name, contains, is_kid_favourite, meal_types")
+    .eq("household_id", householdId)
     .eq("is_active", true);
 
   const safeRecipes = ((recipes as Recipe[] | null) ?? []).filter((r) => {
@@ -219,6 +214,10 @@ export async function shuffleMeals(formData: FormData) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekMonday)) return;
 
   const supabase = await createClient();
+  const { getCurrentMember } = await import("@/lib/hyetas/whoami");
+  const me = await getCurrentMember();
+  const householdId = me?.household_id ?? null;
+  if (!householdId) return;
   const sunday = addDaysIso(weekMonday, 6);
 
   await supabase
@@ -228,6 +227,7 @@ export async function shuffleMeals(formData: FormData) {
       lunch_recipe_id: null,
       dinner_recipe_id: null,
     })
+    .eq("household_id", householdId)
     .gte("day_date", weekMonday)
     .lte("day_date", sunday);
 

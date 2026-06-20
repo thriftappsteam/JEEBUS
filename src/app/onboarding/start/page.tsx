@@ -102,6 +102,24 @@ export default async function StartNewFamilyPage({
         </fieldset>
 
         <fieldset>
+          <label className="block text-[11px] uppercase tracking-[0.16em] text-slate-400">
+            Your email (how you get back in)
+          </label>
+          <input
+            name="owner_email"
+            type="email"
+            required
+            autoComplete="email"
+            placeholder="you@example.com"
+            className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900 px-4 py-3 text-lg text-slate-100 focus:border-amber-300 focus:outline-none"
+          />
+          <p className="mt-2 text-xs text-slate-500">
+            No passwords — if you&apos;re ever on a new phone we email you a
+            magic link. Kids don&apos;t need email.
+          </p>
+        </fieldset>
+
+        <fieldset>
           <legend className="block text-[11px] uppercase tracking-[0.16em] text-slate-400">
             Pick an avatar
           </legend>

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ruleWarning } from "@/lib/utils/rules";
 import { Header } from "@/components/brand/Header";
@@ -37,20 +38,25 @@ export default async function RecipesPage({
   const memberId = cookieStore.get("hyetas_member_id")?.value ?? null;
 
   let memberName: string | null = null;
+  let householdId: string | null = null;
   if (memberId) {
     const { data: m } = await supabase
       .from("members")
-      .select("name")
+      .select("name, household_id")
       .eq("id", memberId)
       .maybeSingle();
     memberName = m?.name ?? null;
+    householdId = (m?.household_id as string | undefined) ?? null;
   }
+  // No signed-in member → not your recipe box. Bounce to the front door.
+  if (!householdId) redirect("/");
 
   const { data: rows } = await supabase
     .from("recipes")
     .select(
       "id, name, cuisine, meal_types, servings, prep_time_min, is_peanut_free, is_kid_favourite, contains",
     )
+    .eq("household_id", householdId!)
     .eq("is_active", true)
     .order("name");
 

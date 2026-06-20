@@ -9,17 +9,36 @@ export async function saveProfile(formData: FormData) {
   if (!me) redirect("/onboarding");
 
   const foods = formData.getAll("favourite_foods").map((v) => String(v));
-  const mascot = String(formData.get("money_mascot") ?? "dragon");
+  const mascotRaw = formData.get("money_mascot");
+  const wish = String(formData.get("wish") ?? "").trim();
 
   const supabase = await createClient();
-  await supabase
-    .from("members")
-    .update({
-      favourite_foods: foods,
-      money_mascot: mascot,
-      onboarded_at: new Date().toISOString(),
-    })
-    .eq("id", me!.id);
+
+  const updates: Record<string, unknown> = {
+    onboarded_at: new Date().toISOString(),
+  };
+  // Only overwrite what was actually asked on this run — the questions are
+  // feature/role dependent, so absent fields must not clobber existing data.
+  if (foods.length > 0) updates.favourite_foods = foods;
+  if (mascotRaw) updates.money_mascot = String(mascotRaw);
+  if (wish) {
+    const { data: row } = await supabase
+      .from("members")
+      .select("setup_answers")
+      .eq("id", me!.id)
+      .maybeSingle();
+    const prev =
+      (row?.setup_answers as Record<string, unknown> | null) ?? {};
+    updates.setup_answers = {
+      ...prev,
+      wish,
+      answered_at: new Date().toISOString(),
+    };
+  }
+
+  await supabase.from("members").update(updates).eq("id", me!.id);
 
   redirect("/?welcome=1");
 }
+
+// (touched to sync the build sandbox — harmless, delete any time)

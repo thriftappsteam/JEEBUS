@@ -33,20 +33,11 @@ function buildRecurrenceRule(cadence: Cadence, dayHint: DayHint): string | null 
 }
 
 async function getHouseholdId(): Promise<string | null> {
-  // Derive from the signed-in member. Falls back to first household for
-  // legacy callers that haven't picked a member (shouldn't happen in
-  // practice — every authenticated flow has picked).
+  // Derive from the signed-in member, ONLY. (The old "fall back to first
+  // household" guess is unsafe now multiple families share the DB.)
   const { getCurrentMember } = await import("@/lib/hyetas/whoami");
   const me = await getCurrentMember();
-  if (me) return me.household_id;
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("households")
-    .select("id")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  return data?.id ?? null;
+  return me?.household_id ?? null;
 }
 
 function readForm(formData: FormData) {

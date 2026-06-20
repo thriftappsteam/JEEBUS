@@ -30,6 +30,7 @@ export type CurrentHousehold = {
   currency_symbol: string;
   currency_label: string;
   onboarded_at: string | null;
+  features: Record<string, boolean> | null;
 };
 
 /** Read the cookie. Pure string, no DB hit. */
@@ -67,7 +68,7 @@ export async function getCurrentMemberAndHousehold(): Promise<{
   const { data } = await supabase
     .from("households")
     .select(
-      "id, name, emoji, timezone, currency_symbol, currency_label, onboarded_at",
+      "id, name, emoji, timezone, currency_symbol, currency_label, onboarded_at, features",
     )
     .eq("id", member.household_id)
     .maybeSingle();
@@ -82,4 +83,30 @@ export async function anyHouseholdExists(): Promise<boolean> {
     .from("households")
     .select("id", { count: "exact", head: true });
   return (count ?? 0) > 0;
+}
+
+/**
+ * Which household this DEVICE is linked to (set when a family is created,
+ * an invite is redeemed, or a parent magic-links in). Distinct from the
+ * member cookie: it survives "switch user" so the picker stays scoped to
+ * one family and never lists strangers.
+ */
+export async function getDeviceHouseholdId(): Promise<string | null> {
+  const c = await cookies();
+  return c.get("hyetas_household_id")?.value ?? null;
+}
+
+/** Load the device-linked household row, or null. */
+export async function getDeviceHousehold(): Promise<CurrentHousehold | null> {
+  const householdId = await getDeviceHouseholdId();
+  if (!householdId) return null;
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("households")
+    .select(
+      "id, name, emoji, timezone, currency_symbol, currency_label, onboarded_at, features",
+    )
+    .eq("id", householdId)
+    .maybeSingle();
+  return (data as CurrentHousehold | null) ?? null;
 }

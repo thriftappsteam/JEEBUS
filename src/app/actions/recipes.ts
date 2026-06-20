@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { insertStarterRecipes } from "@/lib/hyetas/insertStarterRecipes";
 
 const MEAL_TYPES = ["breakfast", "lunch", "dinner", "snack", "side"] as const;
 const CONTAINS_TAGS = ["peanut", "avocado", "oats", "banana_cooked"] as const;
@@ -10,15 +11,9 @@ const CONTAINS_TAGS = ["peanut", "avocado", "oats", "banana_cooked"] as const;
 async function getHouseholdId(): Promise<string | null> {
   const { getCurrentMember } = await import("@/lib/hyetas/whoami");
   const me = await getCurrentMember();
-  if (me) return me.household_id;
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("households")
-    .select("id")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  return data?.id ?? null;
+  // No signed-in member → no household. (Never guess: with multiple
+  // families on one DB, "first household" would be someone else's.)
+  return me?.household_id ?? null;
 }
 
 function readForm(formData: FormData) {
@@ -127,4 +122,21 @@ export async function removeRecipe(formData: FormData) {
   revalidatePath("/recipes");
   revalidatePath("/meals");
   redirect("/recipes?removed=1");
+}
+
+/** Quick-add ticked starter-catalog recipes from /recipes/new. */
+export async function addStarterRecipes(formData: FormData) {
+  const householdId = await getHouseholdId();
+  if (!householdId) redirect("/");
+
+  const picked = new Set(formData.getAll("starter_recipes").map(String));
+  if (picked.size === 0)
+    redirect("/recipes/new?error=Tick+at+least+one+starter+first");
+
+  const err = await insertStarterRecipes(householdId!, picked);
+  if (err) redirect(`/recipes/new?error=${encodeURIComponent(err)}`);
+
+  revalidatePath("/recipes");
+  revalidatePath("/meals");
+  redirect("/recipes?added=1");
 }

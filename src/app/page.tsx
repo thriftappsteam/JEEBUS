@@ -4,10 +4,9 @@
 
 import Link from "next/link";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { markDone } from "@/app/actions/done";
-import { pickMember } from "@/app/actions/whoami";
+import { enterAs } from "@/app/actions/whoami";
 import {
   requestChoreClaim,
   approveChoreClaim,
@@ -19,7 +18,8 @@ import { Wordmark } from "@/components/brand/Wordmark";
 import { Avatar } from "@/components/brand/Avatar";
 import { Header } from "@/components/brand/Header";
 import { memberStyle } from "@/lib/brand/memberStyle";
-import { anyHouseholdExists } from "@/lib/hyetas/whoami";
+import { Welcome } from "@/components/landing/Welcome";
+import { resolveFeatures } from "@/lib/hyetas/features";
 
 export const dynamic = "force-dynamic";
 
@@ -44,11 +44,14 @@ type TodayRow = {
   is_for_me: boolean;
 };
 
-const PICKER_ORDER: Record<string, number> = {
-  Lisa: 0,
-  Andrew: 1,
-  Alex: 2,
-  Hannah: 3,
+type PickerMember = Member & { pin_hash: string | null };
+
+const ROLE_ORDER: Record<string, number> = {
+  parent: 0,
+  partner: 1,
+  teen: 2,
+  kid: 3,
+  other: 4,
 };
 
 export default async function Home({
@@ -62,6 +65,7 @@ export default async function Home({
     claim_declined?: string;
     claim_resubmitted?: string;
     welcome?: string;
+    pin_for?: string;
   }>;
 }) {
   const {
@@ -72,85 +76,148 @@ export default async function Home({
     claim_declined,
     claim_resubmitted,
     welcome,
+    pin_for,
   } = await searchParams;
   const supabase = await createClient();
   const cookieStore = await cookies();
   const memberId = cookieStore.get("hyetas_member_id")?.value ?? null;
+  const deviceHouseholdId =
+    cookieStore.get("hyetas_household_id")?.value ?? null;
 
-  // If there are NO households at all, the very first user lands here ->
-  // ship them to onboarding.
-  if (!memberId) {
-    const exists = await anyHouseholdExists();
-    if (!exists) redirect("/onboarding");
-  }
-
-  // If we have a cookie, scope the picker to THAT member's household.
-  let householdScopeId: string | null = null;
+  // Who is signed in on this device (if anyone)?
+  let me: Member | null = null;
   if (memberId) {
-    const { data: m } = await supabase
+    const { data: meRow } = await supabase
       .from("members")
-      .select("household_id")
+      .select("id, name, role, household_id, avatar_emoji")
       .eq("id", memberId)
       .maybeSingle();
-    householdScopeId = (m?.household_id as string | null) ?? null;
+    me = (meRow as Member | null) ?? null;
   }
 
-  const membersQuery = supabase
-    .from("members")
-    .select("id, name, role, household_id, avatar_emoji");
-  const { data: members } = householdScopeId
-    ? await membersQuery.eq("household_id", householdScopeId)
-    : await membersQuery;
+  // Which household may this device show? The signed-in member's, else the
+  // device-link cookie's. NEVER "all households" — a stranger's device has
+  // neither cookie and gets the public welcome page instead of family data.
+  const pickerHouseholdId = me?.household_id ?? deviceHouseholdId;
 
-  const family: Member[] = (members ?? [])
-    .slice()
-    .sort((a: Member, b: Member) => {
-      const ai = PICKER_ORDER[a.name] ?? 99;
-      const bi = PICKER_ORDER[b.name] ?? 99;
-      return ai - bi;
-    });
+  /* ---------- Unknown device: public welcome, zero family data ---------- */
+  if (!me && !pickerHouseholdId) {
+    return <Welcome />;
+  }
 
-  const me = memberId ? family.find((m) => m.id === memberId) : null;
-
-  /* -------------- Picker (no cookie / unknown member) -------------- */
+  /* ---------- Picker (device is linked, nobody signed in) ---------- */
   if (!me) {
+    const { data: hh } = await supabase
+      .from("households")
+      .select("id, name, emoji")
+      .eq("id", pickerHouseholdId!)
+      .maybeSingle();
+    const household =
+      (hh as { id: string; name: string; emoji: string | null } | null) ??
+      null;
+    if (!household) return <Welcome />; // stale device link
+
+    const { data: members } = await supabase
+      .from("members")
+      .select("id, name, role, household_id, avatar_emoji, pin_hash")
+      .eq("household_id", household.id);
+
+    const family: PickerMember[] = ((members as PickerMember[] | null) ?? [])
+      .slice()
+      .sort(
+        (a, b) =>
+          (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) ||
+          a.name.localeCompare(b.name),
+      );
+
     return (
       <main className="mx-auto flex min-h-dvh max-w-md flex-col px-6 pt-10 pb-12">
         <div className="flex flex-col items-center text-center">
           <Mascot size={120} />
           <Wordmark size="xl" className="mt-2" />
           <p className="mt-1 text-base text-slate-300">
-            Have you ever seen a man throw a shoe.
+            {household.emoji ?? "🏡"} {household.name}
           </p>
           <p className="mt-6 text-[11px] uppercase tracking-[0.18em] text-slate-500">
             Who&apos;s on this device?
           </p>
         </div>
 
+        {error ? (
+          <p
+            role="alert"
+            className="mt-4 rounded-xl border border-rose-700/40 bg-rose-900/30 px-4 py-3 text-center text-sm text-rose-300"
+          >
+            {error}
+          </p>
+        ) : null}
+
         <section className="mt-6 grid grid-cols-2 gap-3">
-          {family.map((m) => (
-            <form key={m.id} action={pickMember}>
-              <input type="hidden" name="member_id" value={m.id} />
-              <button
-                type="submit"
-                className="flex w-full flex-col items-center gap-3 rounded-3xl border border-white/10 bg-white/[0.04] px-4 py-6 transition hover:bg-white/[0.08]"
+          {family.map((m) =>
+            m.pin_hash ? (
+              <details
+                key={m.id}
+                open={pin_for === m.id}
+                className="rounded-3xl border border-white/10 bg-white/[0.04]"
               >
-                <Avatar name={m.name} emoji={m.avatar_emoji} size={72} />
-                <span className="text-2xl font-display font-bold text-slate-100">
-                  {m.name}
-                </span>
-                <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
-                  {m.role}
-                </span>
-              </button>
-            </form>
-          ))}
+                <summary className="flex cursor-pointer list-none flex-col items-center gap-3 px-4 py-6 transition hover:bg-white/[0.04] [&::-webkit-details-marker]:hidden">
+                  <Avatar name={m.name} emoji={m.avatar_emoji} size={72} />
+                  <span className="font-display text-2xl font-bold text-slate-100">
+                    {m.name}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                    🔒 {m.role}
+                  </span>
+                </summary>
+                <form action={enterAs} className="flex items-center gap-2 px-4 pb-4">
+                  <input type="hidden" name="member_id" value={m.id} />
+                  <input
+                    name="pin"
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="PIN"
+                    autoComplete="off"
+                    className="w-full min-w-0 rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-center text-lg tracking-[0.3em] text-slate-100 focus:border-amber-300 focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    className="rounded-xl bg-amber-300 px-3 py-2 text-xs font-bold uppercase text-slate-950"
+                  >
+                    Go
+                  </button>
+                </form>
+              </details>
+            ) : (
+              <form key={m.id} action={enterAs}>
+                <input type="hidden" name="member_id" value={m.id} />
+                <button
+                  type="submit"
+                  className="flex w-full flex-col items-center gap-3 rounded-3xl border border-white/10 bg-white/[0.04] px-4 py-6 transition hover:bg-white/[0.08]"
+                >
+                  <Avatar name={m.name} emoji={m.avatar_emoji} size={72} />
+                  <span className="text-2xl font-display font-bold text-slate-100">
+                    {m.name}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                    {m.role}
+                  </span>
+                </button>
+              </form>
+            ),
+          )}
         </section>
 
-        <div className="mt-8 text-center">
+        <div className="mt-8 space-y-2 text-center">
+          <Link
+            href="/signin"
+            className="block text-[11px] uppercase tracking-wider text-slate-500 hover:text-slate-300"
+          >
+            Grown-up on a new device? Sign in with email →
+          </Link>
           <Link
             href="/onboarding"
-            className="text-[11px] uppercase tracking-wider text-amber-300/80 hover:text-amber-300"
+            className="block text-[11px] uppercase tracking-wider text-amber-300/80 hover:text-amber-300"
           >
             Not your family? Start fresh or join with a code →
           </Link>
@@ -164,77 +231,97 @@ export default async function Home({
   }
 
   /* -------------- Tonight view for the picked member -------------- */
-  // Make sure today's chores have been generated from the rotation. Idempotent.
-  await supabase.rpc("generate_assignments_for_today");
+  // Which features has this household switched on? (null = everything)
+  const { data: hhFeatRow } = await supabase
+    .from("households")
+    .select("features")
+    .eq("id", me.household_id)
+    .maybeSingle();
+  const features = resolveFeatures(hhFeatRow?.features ?? null);
 
-  const { data: rows } = await supabase.rpc("todays_assignments", {
-    p_member_id: me.id,
-  });
-  const today = (rows as TodayRow[] | null) ?? [];
+  // Make sure today's chores have been generated from the rotation. Idempotent.
+  let today: TodayRow[] = [];
+  if (features.chores) {
+    await supabase.rpc("generate_assignments_for_today");
+    const { data: rows } = await supabase.rpc("todays_assignments", {
+      p_member_id: me.id,
+    });
+    today = (rows as TodayRow[] | null) ?? [];
+  }
 
   // Anyone on a shift starting today (Melbourne)?
-  const { data: shiftRows } = await supabase
-    .from("v_todays_shifts")
-    .select(
-      "shift_id, member_id, member_name, shift_type, starts_at, ends_at, is_last_in_block",
-    )
-    .order("starts_at");
-  const todaysShifts =
-    (shiftRows as
-      | {
-          shift_id: string;
-          member_id: string;
-          member_name: string;
-          shift_type: string;
-          starts_at: string;
-          ends_at: string;
-          is_last_in_block: boolean;
-        }[]
-      | null) ?? [];
+  type ShiftToday = {
+    shift_id: string;
+    member_id: string;
+    member_name: string;
+    shift_type: string;
+    starts_at: string;
+    ends_at: string;
+    is_last_in_block: boolean;
+  };
+  let todaysShifts: ShiftToday[] = [];
+  let nextShift: { starts_at: string } | null = null;
+  let hasAnyShifts = false;
+  if (features.shifts) {
+    const { data: shiftRows } = await supabase
+      .from("v_todays_shifts")
+      .select(
+        "shift_id, member_id, member_name, shift_type, starts_at, ends_at, is_last_in_block",
+      )
+      .eq("household_id", me.household_id)
+      .order("starts_at");
+    todaysShifts = (shiftRows as ShiftToday[] | null) ?? [];
 
-  // Next shift for the picked member (within the upcoming 14 days)
-  const inFourteenDays = new Date();
-  inFourteenDays.setDate(inFourteenDays.getDate() + 14);
-  const { data: upcomingShifts } = await supabase
-    .from("shifts")
-    .select("starts_at")
-    .eq("member_id", me.id)
-    .gt("starts_at", new Date().toISOString())
-    .lte("starts_at", inFourteenDays.toISOString())
-    .order("starts_at")
-    .limit(1);
-  const nextShift = upcomingShifts?.[0] ?? null;
-
-  // Does this member have any shifts at all? Controls whether we show a
-  // small "My roster" entry-point link on Tonight.
-  const { count: shiftCount } = await supabase
-    .from("shifts")
-    .select("id", { count: "exact", head: true })
-    .eq("member_id", me.id);
-  const hasAnyShifts = (shiftCount ?? 0) > 0;
-
-  // Unseen new badges for celebration toast
-  const { data: unseenBadges } = await supabase
-    .from("member_badges")
-    .select(
-      `badge_code, badge:badge_catalog!badge_code(name, emoji)`,
-    )
-    .eq("member_id", me.id)
-    .eq("seen_by_member", false)
-    .order("earned_at", { ascending: false })
-    .limit(3);
-  const newBadges =
-    (unseenBadges as unknown as {
-      badge_code: string;
-      badge: { name: string; emoji: string } | null;
-    }[] | null) ?? [];
-  if (newBadges.length > 0) {
-    // Mark seen so they don't pop again on refresh
-    await supabase
-      .from("member_badges")
-      .update({ seen_by_member: true })
+    // Next shift for the picked member (within the upcoming 14 days)
+    const inFourteenDays = new Date();
+    inFourteenDays.setDate(inFourteenDays.getDate() + 14);
+    const { data: upcomingShifts } = await supabase
+      .from("shifts")
+      .select("starts_at")
       .eq("member_id", me.id)
-      .eq("seen_by_member", false);
+      .gt("starts_at", new Date().toISOString())
+      .lte("starts_at", inFourteenDays.toISOString())
+      .order("starts_at")
+      .limit(1);
+    nextShift = upcomingShifts?.[0] ?? null;
+
+    // Does this member have any shifts at all? Controls whether we show a
+    // small "My roster" entry-point link on Tonight.
+    const { count: shiftCount } = await supabase
+      .from("shifts")
+      .select("id", { count: "exact", head: true })
+      .eq("member_id", me.id);
+    hasAnyShifts = (shiftCount ?? 0) > 0;
+  }
+
+  // Unseen new badges for celebration toast (badges live under kid money)
+  let newBadges: {
+    badge_code: string;
+    badge: { name: string; emoji: string } | null;
+  }[] = [];
+  if (features.money) {
+    const { data: unseenBadges } = await supabase
+      .from("member_badges")
+      .select(
+        `badge_code, badge:badge_catalog!badge_code(name, emoji)`,
+      )
+      .eq("member_id", me.id)
+      .eq("seen_by_member", false)
+      .order("earned_at", { ascending: false })
+      .limit(3);
+    newBadges =
+      (unseenBadges as unknown as {
+        badge_code: string;
+        badge: { name: string; emoji: string } | null;
+      }[] | null) ?? [];
+    if (newBadges.length > 0) {
+      // Mark seen so they don't pop again on refresh
+      await supabase
+        .from("member_badges")
+        .update({ seen_by_member: true })
+        .eq("member_id", me.id)
+        .eq("seen_by_member", false);
+    }
   }
 
   const myPending = today.filter((r) => r.is_for_me && r.status === "pending");
@@ -299,14 +386,22 @@ export default async function Home({
       <Header
         subtitle={`Hi, ${me.name}. The system is asking — not you.`}
         rightSlot={
-          <form action="/auth/signout" method="post">
-            <button
-              type="submit"
+          <div className="flex items-center gap-3">
+            <Link
+              href="/account"
               className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-300"
             >
-              Switch user
-            </button>
-          </form>
+              You &amp; family
+            </Link>
+            <form action="/auth/signout" method="post">
+              <button
+                type="submit"
+                className="text-[10px] uppercase tracking-wider text-slate-500 hover:text-slate-300"
+              >
+                Switch user
+              </button>
+            </form>
+          </div>
         }
       />
 
@@ -516,16 +611,45 @@ export default async function Home({
         </p>
 
         {myPending.length === 0 && myDone.length === 0 ? (
-          <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 text-sm text-slate-400">
-            <span className="mr-2">🛋️</span>Nothing on your plate. Sit on a couch.
-          </div>
+          features.chores ? (
+            <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 text-sm text-slate-400">
+              <span className="mr-2">🛋️</span>Nothing on your plate. Sit on a couch.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {features.meals ? (
+                <Link
+                  href="/meals"
+                  className="block rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-200 transition hover:bg-white/[0.06]"
+                >
+                  🍝 This week&apos;s meals →
+                </Link>
+              ) : null}
+              {features.grocery ? (
+                <Link
+                  href="/grocery"
+                  className="block rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-200 transition hover:bg-white/[0.06]"
+                >
+                  🛒 Grocery list →
+                </Link>
+              ) : null}
+              {features.money ? (
+                <Link
+                  href="/money"
+                  className="block rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-200 transition hover:bg-white/[0.06]"
+                >
+                  💰 Kid money →
+                </Link>
+              ) : null}
+            </div>
+          )
         ) : null}
 
         {myPending.map((row) => {
           const rowAccent = memberStyle(row.member_name).accent;
           const isFamilyChore = row.member_name === "Family";
           const kidCanAskForBounty =
-            isFamilyChore && me.role !== "parent";
+            features.money && isFamilyChore && me.role !== "parent";
           const alreadyAsked = myPendingClaimAssignmentIds.has(
             row.assignment_id,
           );
@@ -655,7 +779,7 @@ export default async function Home({
           {otherToday.map((row) => {
             const rowAccent = memberStyle(row.member_name).accent;
             const canClaim =
-              me.role !== "parent" && row.status === "pending";
+              features.money && me.role !== "parent" && row.status === "pending";
             const alreadyAsked = myPendingClaimAssignmentIds.has(
               row.assignment_id,
             );
@@ -739,3 +863,5 @@ export default async function Home({
     </main>
   );
 }
+
+// (touched to sync the build sandbox — harmless, delete any time)

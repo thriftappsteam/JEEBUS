@@ -25,8 +25,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
-      icon: "/favicon.svg",
-      badge: "/favicon.svg",
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
       data: { url },
       tag: data.tag || "hyetas-default",
       // Sleep guard: silent notifications still show on the lock screen
