@@ -9,6 +9,7 @@ import { Header } from "@/components/brand/Header";
 import { ShopModeBanner } from "@/components/grocery/ShopModeBanner";
 import { ShopRow, type ShopRowItem } from "@/components/grocery/ShopRow";
 import { StandingItemsPanel } from "@/components/grocery/StandingItemsPanel";
+import { PriceEntryPanel } from "@/components/grocery/PriceEntryPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +63,7 @@ export default async function GroceryPage({
     added?: string;
     saved?: string;
     removed?: string;
+    priced?: string;
     standing_saved?: string;
     standing_removed?: string;
   }>;
@@ -72,6 +74,7 @@ export default async function GroceryPage({
   const justAdded = sp.added === "1";
   const justSaved = sp.saved === "1";
   const justRemoved = sp.removed === "1";
+  const justPriced = sp.priced === "1";
   const justStandingSaved = sp.standing_saved === "1";
   const justStandingRemoved = sp.standing_removed === "1";
   const shopMode: ShopMode =
@@ -122,10 +125,32 @@ export default async function GroceryPage({
   const firstShopUrl =
     unticked.length > 0 ? shopUrl(unticked[0].item, shopMode) : null;
 
-  const colesTotal = items.reduce((s, i) => s + (i.coles_price ?? 0), 0);
-  const wooliesTotal = items.reduce((s, i) => s + (i.woolies_price ?? 0), 0);
-  const bestTotal = items.reduce((s, i) => s + (i.best_price ?? 0), 0);
-  const pricedCount = items.filter((i) => i.best_price != null).length;
+  // Whole-basket comparison: only count items priced at BOTH stores so the
+  // two totals are apples-to-apples.
+  const comparableItems = items.filter(
+    (i) => i.coles_price != null && i.woolies_price != null,
+  );
+  const colesTotal = comparableItems.reduce(
+    (s, i) => s + (i.coles_price ?? 0),
+    0,
+  );
+  const wooliesTotal = comparableItems.reduce(
+    (s, i) => s + (i.woolies_price ?? 0),
+    0,
+  );
+  const comparableCount = comparableItems.length;
+  const anyPriced = items.some(
+    (i) => i.coles_price != null || i.woolies_price != null,
+  );
+  const basketDiff = Math.abs(colesTotal - wooliesTotal);
+  const basketWinner: "coles" | "woolies" | "tie" | null =
+    comparableCount === 0
+      ? null
+      : colesTotal < wooliesTotal
+        ? "coles"
+        : wooliesTotal < colesTotal
+          ? "woolies"
+          : "tie";
   const totalCount = items.length;
   const checkedCount = items.filter((i) => i.got_it).length;
 
@@ -148,6 +173,11 @@ export default async function GroceryPage({
       {justSaved ? (
         <div className="mt-4 rounded-2xl border border-emerald-400/40 bg-emerald-900/20 px-4 py-2.5 text-sm text-emerald-200">
           ✓ Saved
+        </div>
+      ) : null}
+      {justPriced ? (
+        <div className="mt-4 rounded-2xl border border-emerald-400/40 bg-emerald-900/20 px-4 py-2.5 text-sm text-emerald-200">
+          ✓ Prices saved
         </div>
       ) : null}
       {justRemoved ? (
@@ -217,7 +247,10 @@ export default async function GroceryPage({
         </p>
       </form>
 
-      {pricedCount > 0 ? (
+      {/* Weekly Coles vs Woolies price entry */}
+      <PriceEntryPanel items={orderedItems} weekMonday={monday} slot={slot} />
+
+      {anyPriced ? (
         <section
           className="mt-6 overflow-hidden rounded-3xl border border-white/10 p-4"
           style={{
@@ -226,25 +259,38 @@ export default async function GroceryPage({
           }}
         >
           <p className="text-[10px] uppercase tracking-[0.18em] text-amber-200/80">
-            Priced ({pricedCount} items)
+            This week&apos;s basket
           </p>
-          <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-            <Total
-              label="Coles"
-              amount={colesTotal}
-              winner={colesTotal <= wooliesTotal && colesTotal <= bestTotal}
-            />
-            <Total
-              label="Woolies"
-              amount={wooliesTotal}
-              winner={wooliesTotal < colesTotal && wooliesTotal <= bestTotal}
-            />
-            <Total
-              label="Best mix"
-              amount={bestTotal}
-              winner={bestTotal < colesTotal && bestTotal < wooliesTotal}
-            />
-          </div>
+          {comparableCount > 0 ? (
+            <>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-center">
+                <Total
+                  label="Coles"
+                  amount={colesTotal}
+                  winner={basketWinner === "coles"}
+                />
+                <Total
+                  label="Woolworths"
+                  amount={wooliesTotal}
+                  winner={basketWinner === "woolies"}
+                />
+              </div>
+              <p className="mt-3 text-center text-sm font-medium text-emerald-200">
+                {basketWinner === "tie"
+                  ? "Line ball — same price at both."
+                  : `${basketWinner === "coles" ? "Coles" : "Woolworths"} is $${basketDiff.toFixed(2)} cheaper this week.`}
+              </p>
+              <p className="mt-1 text-center text-[11px] text-slate-400">
+                Based on {comparableCount} of {totalCount} item
+                {totalCount === 1 ? "" : "s"} priced at both stores.
+              </p>
+            </>
+          ) : (
+            <p className="mt-2 text-sm text-slate-300">
+              Add both a Coles and a Woolies price to the same items to see which
+              shop wins.
+            </p>
+          )}
         </section>
       ) : null}
 

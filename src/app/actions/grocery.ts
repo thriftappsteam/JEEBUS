@@ -233,6 +233,71 @@ export async function removeGroceryItem(formData: FormData) {
   redirect(`/grocery?week=${slot}&removed=1`);
 }
 
+// -- Weekly price comparison ---------------------------------------------------
+
+/** Parse a price field: "$2.50" / "2.5" / "" -> number | null (>= 0). */
+function parsePrice(value: FormDataEntryValue | null): number | null {
+  const s = String(value ?? "")
+    .trim()
+    .replace(/^\$/, "");
+  if (!s) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * Save Coles/Woolies prices for a week's grocery list.
+ * Expects hidden `ids` (comma-separated) plus `coles_<id>` / `woolies_<id>`
+ * fields. For each row we store both prices and derive:
+ *   - best_price: the cheaper of the two (or the only one entered)
+ *   - cheaper_at: 'coles' | 'woolworths' | 'tie' when BOTH are known, else null
+ *   - price_checked_at: now
+ */
+export async function saveGroceryPrices(formData: FormData) {
+  const weekMonday = String(formData.get("week") ?? "");
+  const slot = String(formData.get("slot") ?? "current");
+  const ids = String(formData.get("ids") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (ids.length === 0) return;
+
+  const supabase = await createClient();
+  const now = new Date().toISOString();
+
+  for (const id of ids) {
+    const coles = parsePrice(formData.get(`coles_${id}`));
+    const woolies = parsePrice(formData.get(`woolies_${id}`));
+
+    let best_price: number | null = null;
+    let cheaper_at: "coles" | "woolworths" | "tie" | null = null;
+    if (coles != null && woolies != null) {
+      best_price = Math.min(coles, woolies);
+      cheaper_at =
+        coles < woolies ? "coles" : woolies < coles ? "woolworths" : "tie";
+    } else if (coles != null) {
+      best_price = coles;
+    } else if (woolies != null) {
+      best_price = woolies;
+    }
+
+    await supabase
+      .from("grocery_items")
+      .update({
+        coles_price: coles,
+        woolies_price: woolies,
+        best_price,
+        cheaper_at,
+        price_checked_at: coles != null || woolies != null ? now : null,
+      })
+      .eq("id", id);
+  }
+
+  revalidatePath("/grocery");
+  redirect(`/grocery?week=${slot}&priced=1`);
+}
+
 // -- Standing items (unchanged) -----------------------------------------------
 
 export async function addStandingItem(formData: FormData) {
