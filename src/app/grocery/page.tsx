@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentMember } from "@/lib/hyetas/whoami";
-import { rebuildGrocery } from "@/app/actions/grocery";
+import { rebuildGrocery, requestPriceRefresh } from "@/app/actions/grocery";
 import {
   planningWeekMonday,
   nextPlanningWeekMonday,
@@ -18,6 +18,7 @@ export const dynamic = "force-dynamic";
 type Item = ShopRowItem & {
   aisle: string | null;
   best_price: number | null;
+  price_checked_at: string | null;
 };
 
 type ShopMode = "coles" | "woolies" | null;
@@ -66,6 +67,7 @@ export default async function GroceryPage({
     saved?: string;
     removed?: string;
     priced?: string;
+    refresh_requested?: string;
     standing_saved?: string;
     standing_removed?: string;
   }>;
@@ -77,6 +79,7 @@ export default async function GroceryPage({
   const justSaved = sp.saved === "1";
   const justRemoved = sp.removed === "1";
   const justPriced = sp.priced === "1";
+  const justRefreshRequested = sp.refresh_requested === "1";
   const justStandingSaved = sp.standing_saved === "1";
   const justStandingRemoved = sp.standing_removed === "1";
   const shopMode: ShopMode =
@@ -92,7 +95,7 @@ export default async function GroceryPage({
   const { data: rows } = await supabase
     .from("grocery_items")
     .select(
-      "id, item, quantity, aisle, for_recipes, notes, coles_price, woolies_price, best_price, cheaper_at, got_it, is_standing, is_manual",
+      "id, item, quantity, aisle, for_recipes, notes, coles_price, woolies_price, best_price, cheaper_at, price_checked_at, got_it, is_standing, is_manual",
     )
     .eq("household_id", me!.household_id)
     .eq("week_of", monday)
@@ -100,6 +103,16 @@ export default async function GroceryPage({
     .order("item");
 
   const items = (rows as Item[] | null) ?? [];
+
+  // Latest "refresh prices" request for this week (if any).
+  const { data: latestRefresh } = await supabase
+    .from("price_refresh_requests")
+    .select("requested_at")
+    .eq("household_id", me!.household_id)
+    .eq("week_of", monday)
+    .order("requested_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   const byAisle = new Map<string, Item[]>();
   for (const it of items) {
@@ -159,6 +172,17 @@ export default async function GroceryPage({
   const totalCount = items.length;
   const checkedCount = items.filter((i) => i.got_it).length;
 
+  // Price freshness + whether a refresh has been requested but not yet run.
+  const lastCheckedMs = items.reduce((max, i) => {
+    const t = i.price_checked_at ? Date.parse(i.price_checked_at) : 0;
+    return t > max ? t : max;
+  }, 0);
+  const lastChecked = lastCheckedMs > 0 ? new Date(lastCheckedMs) : null;
+  const requestedMs = latestRefresh?.requested_at
+    ? Date.parse(latestRefresh.requested_at)
+    : 0;
+  const refreshPending = requestedMs > 0 && requestedMs > lastCheckedMs;
+
   return (
     <main className="mx-auto max-w-md px-6 pt-10 pb-8">
       <Header
@@ -183,6 +207,12 @@ export default async function GroceryPage({
       {justPriced ? (
         <div className="mt-4 rounded-2xl border border-emerald-400/40 bg-emerald-900/20 px-4 py-2.5 text-sm text-emerald-200">
           ✓ Prices saved
+        </div>
+      ) : null}
+      {justRefreshRequested ? (
+        <div className="mt-4 rounded-2xl border border-sky-400/40 bg-sky-900/20 px-4 py-2.5 text-sm text-sky-200">
+          🔄 Refresh requested — prices will update next time Claude runs a
+          price check.
         </div>
       ) : null}
       {justRemoved ? (
@@ -254,6 +284,45 @@ export default async function GroceryPage({
 
       {/* Weekly Coles vs Woolies price entry */}
       <PriceEntryPanel items={orderedItems} weekMonday={monday} slot={slot} />
+
+      {/* Auto price refresh (runs via Claude in a real browser, not Vercel) */}
+      {totalCount > 0 ? (
+        <div className="mt-3 rounded-2xl border border-sky-400/30 bg-sky-900/10 px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-sky-100">
+                Coles &amp; Woolies prices
+              </p>
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                {lastChecked
+                  ? `Updated ${timeAgo(lastChecked)}`
+                  : "Not fetched yet"}
+                {refreshPending ? " · refresh requested" : ""}
+              </p>
+            </div>
+            <form action={requestPriceRefresh} className="shrink-0">
+              <input type="hidden" name="week" value={monday} />
+              <input type="hidden" name="slot" value={slot} />
+              <button
+                type="submit"
+                disabled={refreshPending}
+                className={`rounded-2xl border px-4 py-2 text-sm font-medium transition ${
+                  refreshPending
+                    ? "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
+                    : "border-sky-400/50 bg-sky-500/20 text-sky-100 hover:bg-sky-500/30"
+                }`}
+              >
+                {refreshPending ? "Requested ✓" : "🔄 Refresh prices"}
+              </button>
+            </form>
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">
+            Pulls live prices from Coles &amp; Woolworths. Runs through a real
+            browser (the stores block automated servers), so prices update next
+            time a price check runs — not instantly.
+          </p>
+        </div>
+      ) : null}
 
       {anyPriced ? (
         <section
@@ -397,4 +466,15 @@ function fmt(iso: string) {
     day: "numeric",
     month: "short",
   });
+}
+
+function timeAgo(date: Date): string {
+  const mins = Math.round((Date.now() - date.getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return date.toLocaleDateString("en-AU", { day: "numeric", month: "short" });
 }

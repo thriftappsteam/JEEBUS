@@ -298,6 +298,32 @@ export async function saveGroceryPrices(formData: FormData) {
   redirect(`/grocery?week=${slot}&priced=1`);
 }
 
+/**
+ * Log a request to refresh this week's Coles/Woolies prices. The actual scrape
+ * runs from a real browser (it can't run on Vercel — the store sites block
+ * data-centre IPs), so this just records the ask. The grocery page treats the
+ * week as "refresh pending" until newer prices land (price_checked_at).
+ */
+export async function requestPriceRefresh(formData: FormData) {
+  const weekMonday = String(formData.get("week") ?? "");
+  const slot = String(formData.get("slot") ?? "current");
+  if (!weekMonday) return;
+
+  const { getCurrentMember } = await import("@/lib/hyetas/whoami");
+  const me = await getCurrentMember();
+  if (!me) return;
+
+  const supabase = await createClient();
+  await supabase.from("price_refresh_requests").insert({
+    household_id: me.household_id,
+    week_of: weekMonday,
+    requested_by_member_id: me.id,
+  });
+
+  revalidatePath("/grocery");
+  redirect(`/grocery?week=${slot}&refresh_requested=1`);
+}
+
 // -- Standing items (unchanged) -----------------------------------------------
 
 export async function addStandingItem(formData: FormData) {
