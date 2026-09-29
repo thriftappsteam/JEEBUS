@@ -3,6 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentMember } from "@/lib/hyetas/whoami";
+
+/** The signed-in member's household — never "first household in the DB". */
+async function currentHouseholdId(): Promise<string | null> {
+  const me = await getCurrentMember();
+  return me?.household_id ?? null;
+}
 
 export async function toggleGotIt(formData: FormData) {
   const id = String(formData.get("id") ?? "");
@@ -32,6 +39,8 @@ type StandingItemRow = {
   aisle: string | null;
   notes: string | null;
   home_only: boolean;
+  every_weeks: number | null;
+  last_bought_on: string | null;
 };
 
 type GroceryInsert = {
@@ -61,17 +70,22 @@ export async function rebuildGrocery(formData: FormData) {
   const weekMonday = String(formData.get("week") ?? "");
   const slot = String(formData.get("slot") ?? "current"); // 'current' | 'next'
   if (!weekMonday) return;
+  const householdId = await currentHouseholdId();
+  if (!householdId) return;
+  await rebuildGroceryForWeek(householdId, weekMonday);
+  revalidatePath("/grocery");
+  redirect(`/grocery?week=${slot}&rebuilt=1`);
+}
 
+/**
+ * The rebuild itself, household-scoped, no redirect — shared by the
+ * grocery page button and the weekly plan generator.
+ */
+export async function rebuildGroceryForWeek(
+  householdId: string,
+  weekMonday: string,
+): Promise<void> {
   const supabase = await createClient();
-
-  // 1. Household.
-  const { data: hh } = await supabase
-    .from("households")
-    .select("id")
-    .limit(1)
-    .single();
-  if (!hh) return;
-  const householdId = hh.id as string;
 
   // 2. Read existing manual rows so we can skip duplicates on insert.
   const { data: manualRows } = await supabase
@@ -129,14 +143,22 @@ export async function rebuildGrocery(formData: FormData) {
     }));
 
   // 6. Standing items from the user-managed table, same skip rule.
+  //    Items with a cadence (`every_weeks`) only join the list when due.
   const { data: standingRows } = await supabase
     .from("standing_items")
-    .select("item, quantity, aisle, notes, home_only")
+    .select("item, quantity, aisle, notes, home_only, every_weeks, last_bought_on")
     .eq("household_id", householdId)
     .order("item");
 
+  const weekStart = new Date(weekMonday + "T00:00:00Z").getTime();
   for (const s of (standingRows ?? []) as StandingItemRow[]) {
     if (s.home_only && !isHannahHome) continue;
+    if (s.every_weeks && s.last_bought_on) {
+      const weeksSince =
+        (weekStart - new Date(s.last_bought_on + "T00:00:00Z").getTime()) /
+        (7 * 86400000);
+      if (weeksSince < s.every_weeks - 0.5) continue; // not due yet
+    }
     if (manualNames.has(s.item.toLowerCase().trim())) continue;
     inserts.push({
       household_id: householdId,
@@ -155,9 +177,6 @@ export async function rebuildGrocery(formData: FormData) {
   if (inserts.length > 0) {
     await supabase.from("grocery_items").insert(inserts);
   }
-
-  revalidatePath("/grocery");
-  redirect(`/grocery?week=${slot}&rebuilt=1`);
 }
 
 // -- Manual grocery item CRUD --------------------------------------------------
@@ -172,12 +191,9 @@ export async function addGroceryItem(formData: FormData) {
   if (!item || !weekMonday) return;
 
   const supabase = await createClient();
-  const { data: hh } = await supabase
-    .from("households")
-    .select("id")
-    .limit(1)
-    .single();
-  if (!hh) return;
+  const householdId = await currentHouseholdId();
+  if (!householdId) return;
+  const hh = { id: householdId };
 
   await supabase.from("grocery_items").insert({
     household_id: hh.id,
@@ -335,12 +351,9 @@ export async function addStandingItem(formData: FormData) {
   if (!item) return;
 
   const supabase = await createClient();
-  const { data: hh } = await supabase
-    .from("households")
-    .select("id")
-    .limit(1)
-    .single();
-  if (!hh) return;
+  const householdId = await currentHouseholdId();
+  if (!householdId) return;
+  const hh = { id: householdId };
 
   await supabase.from("standing_items").insert({
     household_id: hh.id,

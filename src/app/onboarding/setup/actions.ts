@@ -96,6 +96,8 @@ export async function saveFeatures(formData: FormData) {
     grocery: picked.has("grocery"),
     money: picked.has("money"),
     shifts: picked.has("shifts"),
+    // The weekly plan rides on meals; it has no card of its own.
+    plan: picked.has("meals"),
   };
 
   const supabase = await createClient();

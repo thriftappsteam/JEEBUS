@@ -214,6 +214,7 @@ export async function setHouseholdFeatures(formData: FormData) {
         grocery: picked.has("grocery"),
         money: picked.has("money"),
         shifts: picked.has("shifts"),
+        plan: picked.has("meals"),
       },
     })
     .eq("id", household.id);

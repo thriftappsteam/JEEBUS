@@ -6,7 +6,13 @@
  * app, exactly as before flags existed.
  */
 
-export type FeatureKey = "chores" | "meals" | "grocery" | "money" | "shifts";
+export type FeatureKey =
+  | "chores"
+  | "meals"
+  | "grocery"
+  | "money"
+  | "shifts"
+  | "plan";
 
 export type Features = Record<FeatureKey, boolean>;
 
@@ -16,6 +22,7 @@ export const FEATURE_KEYS: FeatureKey[] = [
   "grocery",
   "money",
   "shifts",
+  "plan",
 ];
 
 export const ALL_FEATURES_ON: Features = {
@@ -24,6 +31,8 @@ export const ALL_FEATURES_ON: Features = {
   grocery: true,
   money: true,
   shifts: true,
+  /** Matilda's weekly food plan — the intent-first front door for meals. */
+  plan: true,
 };
 
 /** Turn a raw jsonb value into a complete Features object. Missing = on. */

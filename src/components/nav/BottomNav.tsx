@@ -54,7 +54,7 @@ const TABS: Tab[] = [
     ),
   },
   {
-    href: "/meals",
+    href: "/plan",
     label: "Meals",
     feature: "meals",
     icon: (active) => (
@@ -174,7 +174,9 @@ export function BottomNav({ features }: { features: Features }) {
           const active =
             t.href === "/"
               ? pathname === "/"
-              : pathname === t.href || pathname.startsWith(t.href + "/");
+              : pathname === t.href ||
+                pathname.startsWith(t.href + "/") ||
+                (t.href === "/plan" && pathname.startsWith("/meals"));
           return (
             <li key={t.href} className="flex">
               <Link

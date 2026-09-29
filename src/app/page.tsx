@@ -20,6 +20,8 @@ import { Header } from "@/components/brand/Header";
 import { memberStyle } from "@/lib/brand/memberStyle";
 import { Welcome } from "@/components/landing/Welcome";
 import { resolveFeatures } from "@/lib/hyetas/features";
+import { recipeStyle } from "@/lib/brand/recipeStyle";
+import { resolvePlanPrefs, fmtClock } from "@/lib/hyetas/planPrefs";
 
 export const dynamic = "force-dynamic";
 
@@ -234,10 +236,34 @@ export default async function Home({
   // Which features has this household switched on? (null = everything)
   const { data: hhFeatRow } = await supabase
     .from("households")
-    .select("features")
+    .select("features, plan_prefs")
     .eq("id", me.household_id)
     .maybeSingle();
   const features = resolveFeatures(hhFeatRow?.features ?? null);
+  const planPrefs = resolvePlanPrefs(hhFeatRow?.plan_prefs ?? null);
+
+  // Tonight's dinner, from the weekly plan. Answers "what's for dinner?"
+  // without anyone asking Lisa.
+  type DinnerRow = {
+    eating_at_home: boolean;
+    plan_meta: Record<string, unknown> | null;
+    dinner: { id: string; name: string; cuisine: string | null; prep_time_min: number | null } | null;
+  };
+  let dinnerRow: DinnerRow | null = null;
+  if (features.meals && features.plan) {
+    const todayIso = new Date().toLocaleDateString("en-CA", {
+      timeZone: "Australia/Melbourne",
+    });
+    const { data: dr } = await supabase
+      .from("meal_plan_days")
+      .select(
+        "eating_at_home, plan_meta, dinner:recipes!dinner_recipe_id(id, name, cuisine, prep_time_min)",
+      )
+      .eq("household_id", me.household_id)
+      .eq("day_date", todayIso)
+      .maybeSingle();
+    dinnerRow = (dr as unknown as DinnerRow | null) ?? null;
+  }
 
   // Make sure today's chores have been generated from the rotation. Idempotent.
   let today: TodayRow[] = [];
@@ -437,6 +463,59 @@ export default async function Home({
             See all badges →
           </Link>
         </section>
+      ) : null}
+
+      {features.meals && features.plan ? (
+        <Link href="/plan" className="mt-6 block">
+          {dinnerRow && (dinnerRow.dinner || !dinnerRow.eating_at_home) ? (
+            (() => {
+              const out = !dinnerRow.eating_at_home;
+              const st = dinnerRow.dinner
+                ? recipeStyle(dinnerRow.dinner.name, dinnerRow.dinner.cuisine)
+                : null;
+              return (
+                <div
+                  className="relative overflow-hidden rounded-3xl px-5 pb-4 pt-5 text-white shadow-lg"
+                  style={{
+                    background: out
+                      ? "linear-gradient(135deg,#334155,#475569)"
+                      : st?.gradient,
+                  }}
+                >
+                  <span
+                    aria-hidden
+                    className="absolute -right-1 -top-1 select-none text-7xl"
+                    style={{ filter: "drop-shadow(0 6px 10px rgba(0,0,0,.3))" }}
+                  >
+                    {out ? "🍔" : st?.emoji}
+                  </span>
+                  <p className="text-[10px] uppercase tracking-[0.2em] opacity-90">
+                    🍽️ Tonight&apos;s dinner
+                  </p>
+                  <p className="mt-1 max-w-[75%] font-display text-3xl font-bold leading-tight drop-shadow">
+                    {out ? "Eating out" : dinnerRow.dinner!.name}
+                  </p>
+                  <p className="mt-1 text-xs opacity-90">
+                    {out
+                      ? "No cooking tonight."
+                      : `${dinnerRow.dinner!.cuisine ?? ""}${dinnerRow.dinner!.prep_time_min ? ` · about ${dinnerRow.dinner!.prep_time_min} min` : ""}`}
+                    {(dinnerRow.plan_meta?.surprise as string | undefined) === "pending"
+                      ? " · NEW — a grown-up can say yes or no"
+                      : ""}
+                    {" · "}the house hears at {fmtClock(planPrefs.push_time)}
+                  </p>
+                </div>
+              );
+            })()
+          ) : (
+            <div className="rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
+              🍽️ Nothing planned for tonight yet.{" "}
+              <span className="underline">
+                {planPrefs.setup_completed_at ? "Plan the week →" : "Set up the weekly plan →"}
+              </span>
+            </div>
+          )}
+        </Link>
       ) : null}
 
       {todaysShifts.map((s) => {

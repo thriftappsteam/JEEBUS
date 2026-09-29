@@ -7,6 +7,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { STARTER_RECIPES } from "@/lib/hyetas/starterPacks";
+import { starterStyle } from "@/lib/hyetas/starterStyleTags";
 
 export async function insertStarterRecipes(
   householdId: string,
@@ -39,6 +40,8 @@ export async function insertStarterRecipes(
         instructions_md: r.instructions_md,
         is_kid_favourite: r.is_kid_favourite,
         is_active: true,
+        style_tags: starterStyle(r.name).tags,
+        est_cost_aud: starterStyle(r.name).cost,
       })
       .select("id")
       .single();
