@@ -44,6 +44,14 @@ import {
   toggleEatOut,
   surpriseDecision,
 } from "./actions";
+import { useVariantForNight } from "@/app/community/actions";
+import {
+  ensureStarterCatalogue,
+  linkHouseholdRecipes,
+  loadCatalogueCards,
+  type CatalogueCard,
+} from "@/lib/hyetas/communityDb";
+import { CATALOGUE_SORTS, costGlyph, type CatalogueSort, type CommunityVariant } from "@/lib/hyetas/community";
 
 export const dynamic = "force-dynamic";
 
@@ -202,6 +210,8 @@ type Search = {
   week?: string;
   planned?: string;
   error?: string;
+  source?: string;
+  sort?: string;
 };
 
 type MemberRow = { id: string; name: string; role: string };
@@ -226,6 +236,8 @@ type RecipeRef = {
   cuisine: string | null;
   prep_time_min: number | null;
   est_cost_aud: number | null;
+  dish_id?: string | null;
+  variant_id?: string | null;
 };
 
 export default async function PlanPage({
@@ -290,7 +302,7 @@ export default async function PlanPage({
       `id, day_date, eating_at_home, plan_meta,
        breakfast:recipes!breakfast_recipe_id(id, name, cuisine, prep_time_min, est_cost_aud),
        lunch:recipes!lunch_recipe_id(id, name, cuisine, prep_time_min, est_cost_aud),
-       dinner:recipes!dinner_recipe_id(id, name, cuisine, prep_time_min, est_cost_aud)`,
+       dinner:recipes!dinner_recipe_id(id, name, cuisine, prep_time_min, est_cost_aud, dish_id, variant_id)`,
     )
     .eq("household_id", household.id)
     .gte("day_date", weekMonday)
@@ -319,6 +331,9 @@ export default async function PlanPage({
         firstRun={sp.first === "1"}
         householdId={household.id}
         error={sp.error}
+        community={features.community}
+        source={sp.source === "ours" || sp.source === "everyone" ? sp.source : "all"}
+        sort={(CATALOGUE_SORTS.some((x) => x.id === sp.sort) ? sp.sort : "match") as CatalogueSort}
       />
     );
   }
@@ -333,6 +348,7 @@ export default async function PlanPage({
       householdId={household.id}
       justPlanned={sp.planned === "1"}
       grownUp={grownUp}
+      community={features.community}
     />
   );
 }
@@ -656,6 +672,9 @@ async function WeekStartScreen({
   firstRun,
   householdId,
   error,
+  community,
+  source,
+  sort,
 }: {
   prefs: PlanPrefs;
   weekMonday: string;
@@ -665,6 +684,9 @@ async function WeekStartScreen({
   firstRun: boolean;
   householdId: string;
   error?: string;
+  community: boolean;
+  source: "all" | "ours" | "everyone";
+  sort: CatalogueSort;
 }) {
   const supabase = await createClient();
   const weekLabel = `${fmtDate(weekMonday)} – ${fmtDate(addDaysIso(weekMonday, 6))}`;
@@ -706,24 +728,48 @@ async function WeekStartScreen({
 
   // Options: a hand of allowed dinners. Tick "sounds good"; everything
   // unticked is simply not preferred (not disliked) — one tap is enough.
-  const { data: recipes } = await supabase
-    .from("recipes")
-    .select("id, name, cuisine, meal_types, prep_time_min, contains, style_tags, est_cost_aud, is_kid_favourite")
-    .eq("household_id", householdId)
-    .eq("is_active", true);
-  const list = (recipes as Omit<EngineRecipe, "ingredients">[] | null) ?? [];
-  const { data: ings } = list.length
-    ? await supabase
-        .from("recipe_ingredients")
-        .select("recipe_id, name")
-        .in("recipe_id", list.map((r) => r.id))
-    : { data: [] };
-  const byRecipe = new Map<string, string[]>();
-  for (const i of (ings as { recipe_id: string; name: string }[] | null) ?? []) {
-    if (!byRecipe.has(i.recipe_id)) byRecipe.set(i.recipe_id, []);
-    byRecipe.get(i.recipe_id)!.push(i.name.toLowerCase());
+  // With the community catalogue on, the hand draws from OURS + EVERYONE
+  // (one card per dish) and can be sorted by rating / complexity / cost.
+  let cards: CatalogueCard[];
+  if (community) {
+    await ensureStarterCatalogue();
+    await linkHouseholdRecipes(householdId);
+    cards = await loadCatalogueCards(householdId);
+  } else {
+    const { data: recipes } = await supabase
+      .from("recipes")
+      .select("id, name, cuisine, meal_types, prep_time_min, contains, style_tags, est_cost_aud, is_kid_favourite")
+      .eq("household_id", householdId)
+      .eq("is_active", true);
+    const list = (recipes as Omit<EngineRecipe, "ingredients">[] | null) ?? [];
+    const { data: ings } = list.length
+      ? await supabase
+          .from("recipe_ingredients")
+          .select("recipe_id, name")
+          .in("recipe_id", list.map((r) => r.id))
+      : { data: [] };
+    const byRecipe = new Map<string, string[]>();
+    for (const i of (ings as { recipe_id: string; name: string }[] | null) ?? []) {
+      if (!byRecipe.has(i.recipe_id)) byRecipe.set(i.recipe_id, []);
+      byRecipe.get(i.recipe_id)!.push(i.name.toLowerCase());
+    }
+    cards = list.map((r) => ({
+      source: "ours",
+      recipeId: r.id,
+      dishId: null,
+      dishName: r.name,
+      variant: null,
+      variantCount: 0,
+      engine: { ...r, ingredients: byRecipe.get(r.id) ?? [] },
+      rating_avg: null,
+      rating_count: 0,
+      kid_avg: null,
+      complexity: 2,
+      costBand: null,
+      costEst: r.est_cost_aud,
+      verified: false,
+    }));
   }
-  const engine: EngineRecipe[] = list.map((r) => ({ ...r, ingredients: byRecipe.get(r.id) ?? [] }));
 
   // Recently served → so "NEW" means new to this household.
   const { data: hist } = await supabase
@@ -737,13 +783,44 @@ async function WeekStartScreen({
       .filter((x): x is string => !!x),
   );
 
-  const allowed = engine.filter(
-    (r) => (r.meal_types ?? ["dinner"]).includes("dinner") && recipeAllowed(r, prefs),
+  const allowedCards = cards.filter(
+    (c) =>
+      (c.engine.meal_types ?? ["dinner"]).includes("dinner") &&
+      recipeAllowed(c.engine, prefs) &&
+      (source === "all" || c.source === source),
   );
-  // A hand of 8: style matches float up, then random; at least 2 unseen.
-  const ranked = shuffle(allowed).sort((a, b) => styleScore(b, prefs.styles) - styleScore(a, prefs.styles));
-  const unseen = ranked.filter((r) => !seen.has(r.id));
-  const hand = [...unseen.slice(0, 3), ...ranked.filter((r) => !unseen.slice(0, 3).includes(r))].slice(0, 8);
+  const allowed = allowedCards.map((c) => c.engine);
+  const isSeen = (c: CatalogueCard) => (c.recipeId ? seen.has(c.recipeId) : false);
+  // Sort. "Matilda's pick": style matches float up, random ties, at least 3 unseen up front.
+  let ranked: CatalogueCard[];
+  const byMatch = shuffle(allowedCards).sort((a, b) => styleScore(b.engine, prefs.styles) - styleScore(a.engine, prefs.styles));
+  const bump = (c: CatalogueCard) => (c.source === "ours" ? 0.15 : 0); // our own recipes win ties
+  switch (sort) {
+    case "rating":
+      ranked = byMatch.slice().sort((a, b) => (b.rating_avg ?? 0) + Math.min(0.3, b.rating_count * 0.05) + bump(b) - ((a.rating_avg ?? 0) + Math.min(0.3, a.rating_count * 0.05) + bump(a)));
+      break;
+    case "easiest":
+      ranked = byMatch.slice().sort((a, b) => a.complexity - b.complexity || (a.engine.prep_time_min ?? 99) - (b.engine.prep_time_min ?? 99));
+      break;
+    case "fanciest":
+      ranked = byMatch.slice().sort((a, b) => b.complexity - a.complexity || (b.engine.prep_time_min ?? 0) - (a.engine.prep_time_min ?? 0));
+      break;
+    case "cheapest":
+      ranked = byMatch.slice().sort((a, b) => (a.costEst ?? 999) - (b.costEst ?? 999));
+      break;
+    case "priciest":
+      ranked = byMatch.slice().sort((a, b) => (b.costEst ?? -1) - (a.costEst ?? -1));
+      break;
+    default: {
+      const unseen = byMatch.filter((c) => !isSeen(c));
+      const lead = unseen.slice(0, 3);
+      ranked = [...lead, ...byMatch.filter((c) => !lead.includes(c))];
+    }
+  }
+  const hand = ranked.slice(0, community ? 12 : 8);
+  const optionsBase = `/plan?options=1&week=${weekMonday}${firstRun ? "&first=1" : ""}`;
+  const ctl = (k: "source" | "sort", v: string) =>
+    `${optionsBase}&source=${k === "source" ? v : source}&sort=${k === "sort" ? v : sort}`;
 
   return (
     <main className="mx-auto max-w-md px-6 pt-10 pb-24">
@@ -760,31 +837,79 @@ async function WeekStartScreen({
       ) : (
         <form action={generateWeek} className="mt-5 space-y-4">
           <input type="hidden" name="week_monday" value={weekMonday} />
+          {community ? (
+            <div className="space-y-2">
+              <div className="flex gap-1.5 text-[11px]">
+                {(["all", "ours", "everyone"] as const).map((v) => (
+                  <Link key={v} href={ctl("source", v)} className={`rounded-full border px-3 py-1 ${source === v ? "border-amber-300 bg-amber-300 font-semibold text-slate-950" : "border-white/10 text-slate-300"}`}>
+                    {{ all: "Ours + everyone", ours: "Ours", everyone: "Everyone's" }[v]}
+                  </Link>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1.5 text-[11px]">
+                {CATALOGUE_SORTS.map((o) => (
+                  <Link key={o.id} href={ctl("sort", o.id)} className={`rounded-full border px-2.5 py-1 ${sort === o.id ? "border-sky-300 bg-sky-300 font-semibold text-slate-950" : "border-white/10 text-slate-400"}`}>
+                    {o.label}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="grid grid-cols-2 gap-3">
-            {hand.map((r) => {
-              const st = recipeStyle(r.name, r.cuisine);
+            {hand.map((c) => {
+              const r = c.engine;
+              const st = recipeStyle(c.dishName, r.cuisine);
               const id = `liked-${r.id}`;
+              const isNew = !isSeen(c);
               return (
-                <div key={r.id}>
+                <div key={r.id} className="relative">
                   <input id={id} type="checkbox" name="liked" value={r.id} className="peer sr-only" />
                   <label
                     htmlFor={id}
                     className="relative block cursor-pointer overflow-hidden rounded-2xl border-2 border-transparent p-3 text-white transition peer-checked:border-emerald-300 peer-checked:shadow-[0_0_0_3px_rgba(52,211,153,.25)]"
-                    style={{ background: st.gradient, minHeight: 130 }}
+                    style={{ background: st.gradient, minHeight: 150 }}
                   >
-                    {!seen.has(r.id) ? (
+                    {isNew ? (
                       <span className="absolute right-2 top-2 rounded-md bg-sky-400 px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-slate-950">NEW</span>
                     ) : null}
-                    <span className="block text-3xl drop-shadow">{st.emoji}</span>
-                    <span className="mt-2 block text-sm font-semibold leading-tight drop-shadow">{r.name}</span>
+                    {c.source === "everyone" ? (
+                      <span className="absolute left-2 top-2 rounded-md bg-black/40 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white/90">Everyone&apos;s</span>
+                    ) : null}
+                    <span className={`block text-3xl drop-shadow ${c.source === "everyone" ? "mt-4" : ""}`}>{st.emoji}</span>
+                    <span className="mt-2 block text-sm font-semibold leading-tight drop-shadow">{c.dishName}</span>
                     <span className="mt-1 block text-[11px] opacity-90">
-                      {r.cuisine ?? ""}{r.prep_time_min ? ` · ${r.prep_time_min} min` : ""}{r.est_cost_aud != null ? ` · ≈$${Math.round(r.est_cost_aud)}` : ""}
+                      {r.cuisine ?? ""}{r.prep_time_min ? ` · ${r.prep_time_min} min` : ""}
                     </span>
+                    {community ? (
+                      <span className="mt-1.5 block text-[11px] leading-tight drop-shadow">
+                        <span className={c.rating_avg != null ? "text-amber-200" : "text-white/50"}>
+                          {c.rating_avg != null ? `★ ${Number(c.rating_avg).toFixed(1)}` : "☆ –"}
+                        </span>
+                        {c.kid_avg != null ? <span className="ml-1 text-sky-200">kids {Number(c.kid_avg).toFixed(1)}</span> : null}
+                        <span className="ml-1.5">{"🔪".repeat(Math.max(1, Math.min(5, Math.round(c.complexity))))}</span>
+                        <span className="ml-1.5 text-emerald-200">{costGlyph(c.costBand)}</span>
+                        {c.variantCount > 1 ? <span className="ml-1.5 text-white/80">{c.variantCount} ways</span> : null}
+                      </span>
+                    ) : r.est_cost_aud != null ? (
+                      <span className="mt-1 block text-[11px] opacity-90">≈${Math.round(r.est_cost_aud)}</span>
+                    ) : null}
                   </label>
+                  {community && c.dishId ? (
+                    <Link
+                      href={`/dish/${c.dishId}?${c.variant ? `v=${c.variant.id}&` : ""}back=${encodeURIComponent(ctl("sort", sort))}`}
+                      className="absolute bottom-2 right-2 rounded-md bg-black/40 px-1.5 py-0.5 text-[10px] text-white/90 hover:bg-black/60"
+                      aria-label={`See ${c.dishName}`}
+                    >
+                      see ↗
+                    </Link>
+                  ) : null}
                 </div>
               );
             })}
           </div>
+          {community && hand.length === 0 ? (
+            <p className="text-sm text-slate-400">Nothing here for that filter. Try “Ours + everyone”.</p>
+          ) : null}
           <button type="submit" className={BTN}>Plan the week</button>
           <Link href={`/plan?week=${weekMonday}`} className={BTN_GHOST}>Back</Link>
         </form>
@@ -815,6 +940,7 @@ async function WeekScreen({
   householdId,
   justPlanned,
   grownUp,
+  community,
 }: {
   prefs: PlanPrefs;
   weekMonday: string;
@@ -824,6 +950,7 @@ async function WeekScreen({
   householdId: string;
   justPlanned: boolean;
   grownUp: boolean;
+  community: boolean;
 }) {
   const supabase = await createClient();
   const byDate = new Map(days.map((d) => [d.day_date, d]));
@@ -860,6 +987,21 @@ async function WeekScreen({
   );
   const dinnerShare = prefs.budget_aud * DINNER_SHARE;
   const back = `/plan?week=${weekMonday}`;
+
+  // Other ways to make each planned dish (for the one-week switch).
+  const dishIds = Array.from(new Set(dinnerRefs.map((r) => r?.dish_id).filter((x): x is string => !!x)));
+  const { data: vRows } = community && dishIds.length
+    ? await supabase
+        .from("community_variants")
+        .select("id, dish_id, label, author_display, rating_avg, rating_count, complexity_shown, cost_band, cost_override_band, prep_time_min")
+        .in("dish_id", dishIds)
+        .in("status", ["unverified", "verified"])
+    : { data: [] };
+  const variantsByDish = new Map<string, Pick<CommunityVariant, "id" | "dish_id" | "label" | "author_display" | "rating_avg" | "rating_count" | "complexity_shown" | "cost_band" | "cost_override_band" | "prep_time_min">[]>();
+  for (const v of (vRows as Pick<CommunityVariant, "id" | "dish_id" | "label" | "author_display" | "rating_avg" | "rating_count" | "complexity_shown" | "cost_band" | "cost_override_band" | "prep_time_min">[] | null) ?? []) {
+    if (!variantsByDish.has(v.dish_id)) variantsByDish.set(v.dish_id, []);
+    variantsByDish.get(v.dish_id)!.push(v);
+  }
 
   return (
     <main className="mx-auto max-w-md px-6 pt-10 pb-24">
@@ -918,6 +1060,7 @@ async function WeekScreen({
                     ) : "Nothing planned"}
                     {surprise === "pending" ? <span className="ml-2 rounded-md bg-sky-400/20 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">NEW · yes or no?</span> : null}
                     {surprise === "yes" ? <span className="ml-2 text-[10px] font-bold text-sky-300">NEW ✓</span> : null}
+                    {row?.plan_meta?.variant_for_week ? <span className="ml-2 rounded-md bg-amber-300/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-200">{String(row.plan_meta.variant_for_week)} · this week</span> : null}
                   </p>
                   <p className="text-[11px] text-slate-400">
                     {out ? "Nothing on the list for this night" : r ? `${r.cuisine ?? ""}${r.prep_time_min ? ` · ${r.prep_time_min} min` : ""}${r.est_cost_aud != null ? ` · ≈$${Math.round(r.est_cost_aud * Math.max(1, eatingCount / 4))}` : ""}` : ""}
@@ -962,6 +1105,20 @@ async function WeekScreen({
                       </select>
                       <button className="shrink-0 rounded-xl bg-amber-300 px-3 py-2 text-xs font-bold text-slate-950">Swap</button>
                     </form>
+                    {community && r?.dish_id && (variantsByDish.get(r.dish_id)?.length ?? 0) > 1 ? (
+                      <form action={useVariantForNight} className="flex gap-2">
+                        <input type="hidden" name="day_date" value={iso} />
+                        <input type="hidden" name="back" value={back} />
+                        <select name="variant_id" defaultValue={r.variant_id ?? ""} className={`${INPUT} flex-1`} aria-label="Make it a different way this week">
+                          {variantsByDish.get(r.dish_id)!.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.id === r.variant_id ? "✓ " : ""}{v.label}{v.author_display ? ` · ${v.author_display}` : ""}{v.rating_avg != null ? ` · ★${Number(v.rating_avg).toFixed(1)}` : ""} · {costGlyph(v.cost_override_band ?? v.cost_band)}
+                            </option>
+                          ))}
+                        </select>
+                        <button className="shrink-0 rounded-xl border border-amber-300/50 px-3 py-2 text-xs font-bold text-amber-200">This week only</button>
+                      </form>
+                    ) : null}
                     <form action={toggleEatOut}>
                       <input type="hidden" name="day_date" value={iso} />
                       <input type="hidden" name="back" value={back} />

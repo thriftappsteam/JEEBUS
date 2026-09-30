@@ -27,6 +27,7 @@ import {
   type EngineRecipe,
 } from "@/lib/hyetas/planEngine";
 import { rebuildGroceryForWeek } from "@/app/actions/grocery";
+import { linkVariantIntoHousehold, loadVariant } from "@/lib/hyetas/communityDb";
 import { planningWeekMonday } from "@/lib/utils/rules";
 
 /* ------------------------------------------------------------------ */
@@ -257,8 +258,21 @@ export async function generateWeek(formData: FormData) {
   const weekMonday = /^\d{4}-\d{2}-\d{2}$/.test(String(formData.get("week_monday")))
     ? String(formData.get("week_monday"))
     : planningWeekMonday();
-  const liked = new Set(formData.getAll("liked").map(String));
+  const liked = new Set<string>();
   const disliked = new Set(formData.getAll("disliked").map(String));
+  // Community picks ("v:<variant id>") get a household copy first, so the
+  // engine — and the grocery list — treat them like any other recipe.
+  for (const raw of formData.getAll("liked").map(String)) {
+    if (raw.startsWith("v:")) {
+      const variant = await loadVariant(raw.slice(2));
+      if (!variant) continue;
+      try {
+        liked.add(await linkVariantIntoHousehold(household.id, variant, { makeDefault: true }));
+      } catch {
+        /* skip a pick that can't be copied; the rest of the week still plans */
+      }
+    } else liked.add(raw);
+  }
 
   const recipes = await loadEngineRecipes(household.id);
   if (!recipes.length) redirect("/recipes/new?from=plan");
