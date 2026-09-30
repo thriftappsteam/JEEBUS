@@ -297,6 +297,26 @@ export async function generateWeek(formData: FormData) {
     if (h.day_date >= lastMon) lastWeekIds.add(h.dinner_recipe_id);
   }
 
+  // Variety rules work per DISH, not per copy: last week's "Creamy chicken
+  // pasta · Nonna's way" rules out this week's safe one too.
+  if (community) {
+    const { data: fam } = await supabase
+      .from("recipes")
+      .select("id, dish_id")
+      .eq("household_id", household.id)
+      .not("dish_id", "is", null);
+    const byDish = new Map<string, string[]>();
+    for (const r of (fam as { id: string; dish_id: string }[] | null) ?? []) {
+      if (!byDish.has(r.dish_id)) byDish.set(r.dish_id, []);
+      byDish.get(r.dish_id)!.push(r.id);
+    }
+    const expand = (ids: Set<string>) => {
+      for (const [, sibs] of byDish) if (sibs.some((id) => ids.has(id))) sibs.forEach((id) => ids.add(id));
+    };
+    expand(lastWeekIds);
+    expand(seenIds);
+  }
+
   // Top up from Everyone's verified dishes when the household's own
   // allowed dinners can't fill a varied week (no repeats, a real surprise).
   // Keeps the household's dishes first: community candidates only join the
