@@ -98,6 +98,8 @@ export async function saveFeatures(formData: FormData) {
     shifts: picked.has("shifts"),
     // The weekly plan rides on meals; it has no card of its own.
     plan: picked.has("meals"),
+    // Community recipes ride on meals too.
+    community: picked.has("meals"),
   };
 
   const supabase = await createClient();

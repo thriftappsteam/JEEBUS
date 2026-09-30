@@ -12,7 +12,8 @@ export type FeatureKey =
   | "grocery"
   | "money"
   | "shifts"
-  | "plan";
+  | "plan"
+  | "community";
 
 export type Features = Record<FeatureKey, boolean>;
 
@@ -23,6 +24,7 @@ export const FEATURE_KEYS: FeatureKey[] = [
   "money",
   "shifts",
   "plan",
+  "community",
 ];
 
 export const ALL_FEATURES_ON: Features = {
@@ -33,6 +35,8 @@ export const ALL_FEATURES_ON: Features = {
   shifts: true,
   /** Matilda's weekly food plan — the intent-first front door for meals. */
   plan: true,
+  /** Community recipe catalogue — variants, ratings, "make it my way". */
+  community: true,
 };
 
 /** Turn a raw jsonb value into a complete Features object. Missing = on. */
