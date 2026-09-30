@@ -182,6 +182,9 @@ export function parseQuantity(q: string | null | undefined): { value: number | n
 
 export type PriceEntry = { price: number; per: "kg" | "L" | "each" | "cup" };
 
+/** Rough kg (or L) per small measure, for per-kilo prices. */
+const SMALL_MEASURES: Record<string, number> = { cup: 0.15, tbsp: 0.015, tsp: 0.005, clove: 0.005, slice: 0.03, rasher: 0.03 };
+
 /**
  * Estimate the cost of a variant from its ingredient lines and a price
  * lookup (lower-cased ingredient name → price). Pantry staples are skipped
@@ -207,6 +210,8 @@ export function estimateCost(
     if (p.per === "kg" && (unit === "g" || unit === "kg")) line = p.price * (unit === "g" ? (value ?? 500) / 1000 : value ?? 1);
     else if (p.per === "L" && (unit === "ml" || unit === "L")) line = p.price * (unit === "ml" ? (value ?? 500) / 1000 : value ?? 1);
     else if (p.per === "cup" && unit === "cup") line = p.price * (value ?? 1);
+    else if ((p.per === "kg" || p.per === "L") && unit && SMALL_MEASURES[unit] != null)
+      line = p.price * SMALL_MEASURES[unit] * (value ?? 1); // "1/2 cup parmesan" ≈ 75 g
     else if (p.per === "kg" || p.per === "L") line = p.price * 0.5; // "1 bag", "2 fillets" → half a kilo-ish
     else line = p.price * (unit == null || ["whole", "each", "bag", "packet", "tin", "jar", "punnet", "head", "bunch", "loaf"].includes(unit) ? Math.max(1, Math.ceil(value ?? 1)) : 1);
     total += line;
