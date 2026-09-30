@@ -1056,7 +1056,7 @@ async function WeekScreen({
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-slate-100">
                     {out ? "Eating out" : r ? (
-                      <Link href={`/recipes/${r.id}`} className="hover:text-amber-200">{r.name}</Link>
+                      <Link href={`/recipes/${r.id}`} className="hover:text-amber-200">{row?.plan_meta?.variant_for_week ? r.name.split(" · ")[0] : r.name}</Link>
                     ) : "Nothing planned"}
                     {surprise === "pending" ? <span className="ml-2 rounded-md bg-sky-400/20 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">NEW · yes or no?</span> : null}
                     {surprise === "yes" ? <span className="ml-2 text-[10px] font-bold text-sky-300">NEW ✓</span> : null}

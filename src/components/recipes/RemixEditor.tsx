@@ -6,6 +6,8 @@ import { COMPLEXITY_LEVELS, COST_BANDS, type VariantIngredient } from "@/lib/hye
 
 const AISLES = ["Produce", "Protein", "Dairy & Eggs", "Bakery", "Pantry", "Frozen", "Beverages", "Household", "Other"];
 
+const INPUT_BARE =
+  "rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-sm text-slate-100 focus:border-amber-300 focus:outline-none";
 const INPUT =
   "w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-sm text-slate-100 focus:border-amber-300 focus:outline-none";
 const LABEL = "text-[11px] uppercase tracking-[0.16em] text-slate-400";
@@ -163,7 +165,7 @@ export function RemixEditor({ base, error }: { base: RemixBase; error?: string }
                   value={r.name}
                   onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
                   placeholder="ingredient"
-                  className={`${INPUT} flex-1`}
+                  className={`${INPUT_BARE} min-w-0 flex-1`}
                   maxLength={80}
                 />
                 <input
@@ -171,7 +173,7 @@ export function RemixEditor({ base, error }: { base: RemixBase; error?: string }
                   value={r.quantity}
                   onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))}
                   placeholder="250 g"
-                  className={`${INPUT} w-24`}
+                  className={`${INPUT_BARE} w-24 shrink-0`}
                   maxLength={30}
                 />
                 <button
