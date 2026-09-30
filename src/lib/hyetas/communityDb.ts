@@ -425,3 +425,52 @@ export async function loadCatalogueCards(householdId: string): Promise<Catalogue
   }
   return cards;
 }
+
+/* ------------------------------------------------------------------ */
+/* Top-up: Everyone's verified dishes the household doesn't have yet   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Engine-shaped candidates from the community catalogue for dishes the
+ * household has no copy of. Ids are `v:<variant id>`; the caller links a
+ * chosen one into the household (see linkVariantIntoHousehold). Verified
+ * only — an unverified stranger's recipe never lands on a plate unasked.
+ * Best-rated verified variant per dish, the safe default on ties.
+ */
+export async function communityTopUpCandidates(householdId: string): Promise<EngineRecipe[]> {
+  const supabase = await createClient();
+  const [{ data: mine }, { data: dishes }, { data: variants }] = await Promise.all([
+    supabase.from("recipes").select("dish_id, name").eq("household_id", householdId),
+    supabase.from("community_dishes").select("id, name, cuisine, default_variant_id"),
+    supabase.from("community_variants").select(VARIANT_COLS).eq("status", "verified"),
+  ]);
+  const haveDish = new Set(((mine as { dish_id: string | null; name: string }[] | null) ?? []).map((r) => r.dish_id).filter(Boolean));
+  const haveName = new Set(((mine as { dish_id: string | null; name: string }[] | null) ?? []).map((r) => r.name.toLowerCase()));
+  const byDish = new Map<string, CommunityVariant[]>();
+  for (const v of (variants as CommunityVariant[] | null) ?? []) {
+    if (!byDish.has(v.dish_id)) byDish.set(v.dish_id, []);
+    byDish.get(v.dish_id)!.push(v);
+  }
+  const out: EngineRecipe[] = [];
+  for (const d of (dishes as CommunityDish[] | null) ?? []) {
+    if (haveDish.has(d.id) || haveName.has(d.name.toLowerCase())) continue;
+    const vs = byDish.get(d.id) ?? [];
+    if (!vs.length) continue;
+    const dflt = vs.find((v) => v.id === d.default_variant_id);
+    const best = vs.slice().sort((a, b) => Number(b.rating_avg ?? 0) - Number(a.rating_avg ?? 0))[0];
+    const v = dflt && Number(best.rating_avg ?? 0) < Number(dflt.rating_avg ?? 0) + 0.5 ? dflt : best;
+    out.push({
+      id: `v:${v.id}`,
+      name: d.name,
+      cuisine: v.cuisine ?? d.cuisine,
+      meal_types: ["dinner"],
+      prep_time_min: v.prep_time_min,
+      contains: v.contains,
+      style_tags: v.style_tags,
+      est_cost_aud: v.cost_est_aud,
+      is_kid_favourite: v.style_tags.includes("Kid-friendly"),
+      ingredients: engineIngredientNames(v.ingredients),
+    });
+  }
+  return out;
+}

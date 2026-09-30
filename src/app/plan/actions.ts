@@ -24,10 +24,12 @@ import {
   pickSimpleSlot,
   recipeAllowed,
   shuffle,
+  styleScore,
   type EngineRecipe,
 } from "@/lib/hyetas/planEngine";
 import { rebuildGroceryForWeek } from "@/app/actions/grocery";
-import { linkVariantIntoHousehold, loadVariant } from "@/lib/hyetas/communityDb";
+import { communityTopUpCandidates, linkVariantIntoHousehold, loadVariant } from "@/lib/hyetas/communityDb";
+import { resolveFeatures } from "@/lib/hyetas/features";
 import { planningWeekMonday } from "@/lib/utils/rules";
 
 /* ------------------------------------------------------------------ */
@@ -274,8 +276,9 @@ export async function generateWeek(formData: FormData) {
     } else liked.add(raw);
   }
 
-  const recipes = await loadEngineRecipes(household.id);
-  if (!recipes.length) redirect("/recipes/new?from=plan");
+  let recipes = await loadEngineRecipes(household.id);
+  const community = resolveFeatures(household.features).community;
+  if (!recipes.length && !community) redirect("/recipes/new?from=plan");
 
   // Last week + recent history, for the variety rules.
   const lastMon = addDaysIso(weekMonday, -7);
@@ -293,6 +296,25 @@ export async function generateWeek(formData: FormData) {
     seenIds.add(h.dinner_recipe_id);
     if (h.day_date >= lastMon) lastWeekIds.add(h.dinner_recipe_id);
   }
+
+  // Top up from Everyone's verified dishes when the household's own
+  // allowed dinners can't fill a varied week (no repeats, a real surprise).
+  // Keeps the household's dishes first: community candidates only join the
+  // pool, they don't outrank what the family already cooks.
+  const dinnersNeeded = 7 - (prefs.eat_out_dow == null ? 0 : 1);
+  if (community) {
+    const ownAllowed = recipes.filter(
+      (r) => (r.meal_types ?? ["dinner"]).includes("dinner") && recipeAllowed(r, prefs) && !lastWeekIds.has(r.id),
+    ).length;
+    const shortBy = dinnersNeeded + 2 - ownAllowed;
+    if (shortBy > 0) {
+      const cands = shuffle((await communityTopUpCandidates(household.id)).filter((r) => recipeAllowed(r, prefs)))
+        .sort((a, b) => styleScore(b, prefs.styles) - styleScore(a, prefs.styles))
+        .slice(0, shortBy + 2);
+      recipes = [...recipes, ...cands];
+    }
+  }
+  if (!recipes.length) redirect("/recipes/new?from=plan");
 
   const people = await headcount(household.id, prefs);
   const dinners = pickDinners(recipes, prefs, {
@@ -322,12 +344,30 @@ export async function generateWeek(formData: FormData) {
     ]),
   );
 
+  // Community picks that made the week become household copies now.
+  const fromCommunity = new Set<string>();
+  const linked = new Map<string, string>();
+  for (const r of dinners.days) {
+    if (!r || !r.id.startsWith("v:") || linked.has(r.id)) continue;
+    const variant = await loadVariant(r.id.slice(2));
+    if (!variant) continue;
+    try {
+      const rid = await linkVariantIntoHousehold(household.id, variant, { makeDefault: true });
+      linked.set(r.id, rid);
+      fromCommunity.add(rid);
+    } catch {
+      /* leave the night empty rather than fail the week */
+    }
+  }
+  dinners.days = dinners.days.map((r) => (r && r.id.startsWith("v:") ? (linked.has(r.id) ? { ...r, id: linked.get(r.id)! } : null) : r));
+
   const generatedAt = new Date().toISOString();
   for (let d = 0; d < 7; d++) {
     const iso = addDaysIso(weekMonday, d);
     const eatOut = prefs.eat_out_dow === d;
     const meta: Record<string, unknown> = { generated_at: generatedAt, week_of: weekMonday };
     if (dinners.surpriseDay === d) meta.surprise = "pending";
+    if (dinners.days[d] && fromCommunity.has(dinners.days[d]!.id)) meta.from_community = true;
     const patch: Record<string, unknown> = {
       eating_at_home: !eatOut,
       plan_meta: meta,

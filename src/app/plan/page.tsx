@@ -1060,6 +1060,7 @@ async function WeekScreen({
                     ) : "Nothing planned"}
                     {surprise === "pending" ? <span className="ml-2 rounded-md bg-sky-400/20 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">NEW · yes or no?</span> : null}
                     {surprise === "yes" ? <span className="ml-2 text-[10px] font-bold text-sky-300">NEW ✓</span> : null}
+                    {row?.plan_meta?.from_community && !surprise ? <span className="ml-2 rounded-md bg-emerald-300/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-200">from everyone&apos;s</span> : null}
                     {row?.plan_meta?.variant_for_week ? <span className="ml-2 rounded-md bg-amber-300/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-200">{String(row.plan_meta.variant_for_week)} · this week</span> : null}
                   </p>
                   <p className="text-[11px] text-slate-400">
