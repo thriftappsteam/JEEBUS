@@ -878,7 +878,7 @@ async function WeekStartScreen({
                     <span className={`block text-3xl drop-shadow ${c.source === "everyone" ? "mt-4" : ""}`}>{st.emoji}</span>
                     <span className="mt-2 block text-sm font-semibold leading-tight drop-shadow">{c.dishName}</span>
                     <span className="mt-1 block text-[11px] opacity-90">
-                      {r.cuisine ?? ""}{r.prep_time_min ? ` · ${r.prep_time_min} min` : ""}
+                      {[r.cuisine, r.prep_time_min ? `${r.prep_time_min} min` : null].filter(Boolean).join(" · ")}
                     </span>
                     {community ? (
                       <span className="mt-1.5 block text-[11px] leading-tight drop-shadow">

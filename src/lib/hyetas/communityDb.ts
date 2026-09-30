@@ -207,15 +207,20 @@ export async function linkVariantIntoHousehold(
   const firstForDish = !choice;
   const makeDefault = opts.makeDefault || firstForDish;
 
+  // recipes has a unique (household_id, name): the household's "our way"
+  // copy carries the dish name; other copies of the same dish are
+  // "Dish · Label" so a one-week switch never collides.
+  const { data: dish } = await supabase.from("community_dishes").select("name").eq("id", variant.dish_id).maybeSingle();
+  const dishName = (dish?.name as string | undefined) ?? variant.label;
+  const altName = `${dishName} · ${variant.label}`.slice(0, 120);
+
   let recipeId = existing?.id as string | undefined;
   if (!recipeId) {
-    const { data: dish } = await supabase.from("community_dishes").select("name").eq("id", variant.dish_id).maybeSingle();
-    const dishName = (dish?.name as string | undefined) ?? variant.label;
     const { data: inserted, error } = await supabase
       .from("recipes")
       .insert({
         household_id: householdId,
-        name: dishName,
+        name: makeDefault ? dishName : altName,
         cuisine: variant.cuisine,
         meal_types: ["dinner"],
         servings: variant.servings,
@@ -253,14 +258,23 @@ export async function linkVariantIntoHousehold(
   }
 
   if (makeDefault) {
-    // Only one active copy per dish.
-    await supabase
+    // Only one active copy per dish, and only it carries the bare dish name.
+    const { data: siblings } = await supabase
       .from("recipes")
-      .update({ is_active: false })
+      .select("id, variant_id")
       .eq("household_id", householdId)
       .eq("dish_id", variant.dish_id)
       .neq("id", recipeId);
-    await supabase.from("recipes").update({ is_active: true }).eq("id", recipeId);
+    for (const sib of (siblings as { id: string; variant_id: string | null }[] | null) ?? []) {
+      const { data: sv } = sib.variant_id
+        ? await supabase.from("community_variants").select("label").eq("id", sib.variant_id).maybeSingle()
+        : { data: null };
+      await supabase
+        .from("recipes")
+        .update({ is_active: false, name: `${dishName} · ${(sv?.label as string | undefined) ?? "other way"}`.slice(0, 120) })
+        .eq("id", sib.id);
+    }
+    await supabase.from("recipes").update({ is_active: true, name: dishName }).eq("id", recipeId);
     await supabase
       .from("household_dish_choices")
       .upsert({ household_id: householdId, dish_id: variant.dish_id, variant_id: variant.id, recipe_id: recipeId, updated_at: new Date().toISOString() }, { onConflict: "household_id,dish_id" });
@@ -373,7 +387,13 @@ export async function loadCatalogueCards(householdId: string): Promise<Catalogue
   }
   for (const d of dishList) {
     if (dishesCovered.has(d.id) || !d.default_variant_id) continue;
-    const v = vById.get(d.default_variant_id);
+    // The card shows the safe default — unless a verified variant is rated
+    // clearly higher, in which case the best way we know leads.
+    const dflt = vById.get(d.default_variant_id);
+    const best = vList
+      .filter((x) => x.dish_id === d.id && x.status === "verified" && x.rating_avg != null)
+      .sort((a, b) => Number(b.rating_avg) - Number(a.rating_avg))[0];
+    const v = best && dflt && Number(best.rating_avg) >= Number(dflt.rating_avg ?? 0) + 0.5 ? best : dflt;
     if (!v) continue;
     cards.push({
       source: "everyone",
